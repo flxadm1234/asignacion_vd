@@ -117,7 +117,10 @@ if __name__ == "__main__":
 def open_browser(headless, log):
 
     log(f"[NAVEGADOR] open_browser: solicitado headless={headless}")
-    final_headless = False
+    no_display = (sys.platform != "win32") and (not os.environ.get("DISPLAY"))
+    final_headless = bool(headless) or no_display
+    if no_display and not headless:
+        log("[NAVEGADOR] No se detectó DISPLAY. Forzando modo headless.")
     p = sync_playwright().start()
     ctx = p.chromium.launch_persistent_context(
         user_data_dir=str(PROFILE_DIR),
@@ -134,7 +137,10 @@ def open_browser(headless, log):
         page.bring_to_front()
     except Exception:
         pass
-    log(f"[NAVEGADOR] Chromium lanzado (persistente, visible).")
+    if final_headless:
+        log(f"[NAVEGADOR] Chromium lanzado (persistente, headless).")
+    else:
+        log(f"[NAVEGADOR] Chromium lanzado (persistente, visible).")
     return p, ctx, page
 
 # ============================================================
