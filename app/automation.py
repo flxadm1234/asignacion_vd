@@ -76,7 +76,7 @@ def _to_periodo_manual(etapa_ymd: str) -> str:
         meses = {
             "01": "Ene", "02": "Feb", "03": "Mar", "04": "Abr",
             "05": "May", "06": "Jun", "07": "Jul", "08": "Ago",
-            "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dic",
+            "09": "Set", "10": "Oct", "11": "Nov", "12": "Dic",
         }
         return f"{y}-{meses.get(m, m)}"
     except Exception:

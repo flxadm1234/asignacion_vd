@@ -614,9 +614,12 @@ def _abrir_formulario_fila(page, row, log, intentos=3):
     maneja modales de Odoo si aparecen.
     """
     targets = [
-        "td[data-field='documento_numero']",
-        "td[data-field='name']",
-        "td[data-field='documento_tipo']",
+        "td[name='periodo_carga'], td[data-field='periodo_carga']",
+        "td[name='documento_numero'], td[data-field='documento_numero']",
+        "td[name='documento_tipo'], td[data-field='documento_tipo']",
+        "td[name='name'], td[data-field='name']",
+        "td[name='nombres'], td[data-field='nombres']",
+        "td.o_data_cell",
     ]
     for intento in range(1, intentos + 1):
         cerrar_todos_los_modales(page, log)
@@ -1249,7 +1252,7 @@ def normalizar_periodo_seaap(periodo_raw):
     meses = {
         "01": "Ene", "02": "Feb", "03": "Mar", "04": "Abr",
         "05": "May", "06": "Jun", "07": "Jul", "08": "Ago",
-        "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dic"
+        "09": "Set", "10": "Oct", "11": "Nov", "12": "Dic"
     }
     try:
         y, m, _ = periodo_raw.split("-")
@@ -1271,7 +1274,16 @@ def seleccionar_fila_periodo_manual(page, periodo_manual, log):
 
     for i in range(total):
         row = rows.nth(i)
-        periodo = row.locator("td[data-field='periodo_carga']").text_content().strip()
+        cell = row.locator("td[name='periodo_carga'], td[data-field='periodo_carga']")
+        if cell.count() == 0:
+            continue
+        try:
+            periodo = (cell.first.inner_text() or "").strip()
+        except Exception:
+            try:
+                periodo = (cell.first.text_content() or "").strip()
+            except Exception:
+                continue
 
         if periodo == periodo_seaap:
             if _abrir_formulario_fila(page, row, log, intentos=3):
