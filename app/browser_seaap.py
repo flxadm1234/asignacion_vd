@@ -7,6 +7,7 @@ Versión optimizada y robusta.
 import sys
 import subprocess
 import os
+import re
 from playwright.sync_api import sync_playwright
 from db_utils import marcar_registro_consistente
 from pathlib import Path
@@ -1018,15 +1019,33 @@ def buscar_dni_nino(page, dni, log):
         return
 
     # seleccionar opción
-    op = page.locator("li:has-text('DNI del Niño')")
-    if op.count() == 0:
-        log("[SEAAP] No hay opción 'DNI del Niño', usando Enter.")
-        input_box.press("Enter")
-        page.wait_for_timeout(1500)
-        return
+    items = page.locator("ul.o_searchview_autocomplete li")
+    prefer = (
+        items
+        .filter(has_text=re.compile(r"(Búsqueda\s+Niñ|Busqueda\s+Niñ|DNI\s+del\s+Niñ)", re.IGNORECASE))
+        .filter(has_text=dni)
+    )
+    if prefer.count() == 0:
+        prefer = items.filter(has_text=re.compile(r"(Búsqueda\s+Niñ|Busqueda\s+Niñ|DNI\s+del\s+Niñ)", re.IGNORECASE))
 
-    op.first.click()
-    log("SEAAP: opción 'Buscar DNI del Niño' seleccionada.")
+    if prefer.count() > 0:
+        prefer.first.click(force=True)
+        log("SEAAP: opción de búsqueda de Niño seleccionada.")
+    else:
+        log("[SEAAP][WARN] No se encontró opción explícita de Niño. Intentando con teclado…")
+        selected = False
+        for _ in range(6):
+            input_box.press("ArrowDown")
+            page.wait_for_timeout(120)
+            focus = items.filter(has_text=re.compile(r"(Niñ|Nin)", re.IGNORECASE)).first
+            if focus.count():
+                input_box.press("Enter")
+                selected = True
+                break
+        if not selected:
+            log("[SEAAP][WARN] No se pudo seleccionar Niño por teclado. Usando Enter.")
+            input_box.press("Enter")
+        page.wait_for_timeout(800)
 
     # esperar tabla real
     wait_for_real_child_table(page, log)
