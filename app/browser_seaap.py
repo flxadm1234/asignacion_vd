@@ -628,7 +628,7 @@ def _abrir_formulario_fila(page, row, log, intentos=3):
             cell = row.locator(sel)
             if cell.count():
                 try:
-                    cell.first.click(force=True)
+                    cell.first.click(force=True, timeout=60_000)
                     page.wait_for_timeout(1200)
                     cerrar_todos_los_modales(page, log)
                     watchdog_recovery(page, log)
@@ -647,21 +647,6 @@ def _abrir_formulario_fila(page, row, log, intentos=3):
             if page.locator(".o_form_view").count() or page.locator("button.o_form_button_edit").count():
                 log("[SEAAP] Fila abierta en formulario (doble clic).")
                 return True
-        except Exception:
-            pass
-        # Checkbox + Enter
-        try:
-            cb = row.locator("td.o_list_record_selector input[type='checkbox']")
-            if cb.count():
-                cb.first.click()
-                page.wait_for_timeout(300)
-                page.keyboard.press("Enter")
-                page.wait_for_timeout(1200)
-                cerrar_todos_los_modales(page, log)
-                watchdog_recovery(page, log)
-                if page.locator(".o_form_view").count() or page.locator("button.o_form_button_edit").count():
-                    log("[SEAAP] Fila abierta en formulario (checkbox + Enter).")
-                    return True
         except Exception:
             pass
         cerrar_todos_los_modales(page, log)
