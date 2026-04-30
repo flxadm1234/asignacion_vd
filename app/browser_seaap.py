@@ -902,52 +902,47 @@ def presionar_guardar(page, log):
 # ESPERA DEFINITIVA: TABLA REAL (NO LA DE 50 FILAS)
 # ============================================================
 def wait_for_real_child_table(page, log, timeout_ms=20000):
-    rows = page.locator("table.o_list_view tbody tr[data-id]")
+    rows = page.locator("table.o_list_view tbody tr.o_data_row[data-id], table.o_list_view tbody tr[data-id]")
 
-    log("[SEAAP] Esperando la tabla REAL (no la temporal)…")
+    log("[SEAAP] Esperando la tabla de resultados…")
 
-    # 1) esperar tabla falsa de 50
-    found_50 = False
-    for _ in range(timeout_ms // 150):
-        if rows.count() == 50:
-            found_50 = True
-            break
-        page.wait_for_timeout(150)
+    appeared = False
+    step_ms = 200
+    for _ in range(max(1, timeout_ms // step_ms)):
+        try:
+            if rows.count() > 0:
+                appeared = True
+                break
+        except Exception:
+            pass
+        page.wait_for_timeout(step_ms)
 
-    # 2) esperar cambio
-    real_count = None
-    for _ in range(timeout_ms // 150):
-        c = rows.count()
-        if c != 50 and c > 0:
-            real_count = c
-            break
-        page.wait_for_timeout(150)
-
-    if real_count is None:
-        log("[ERROR SEAAP] La tabla real no reemplazó a la tabla temporal.")
+    if not appeared:
+        log("[ERROR SEAAP] No se detectaron filas en la tabla dentro del tiempo de espera.")
         return False
 
-    log(f"[SEAAP] Tabla real detectada con {real_count} filas.")
-
-    # 3) estabilidad
+    last = None
     estable = 0
-    last = real_count
-
-    for _ in range(timeout_ms // 150):
-        c = rows.count()
-        if c == last:
+    for _ in range(max(1, timeout_ms // step_ms)):
+        try:
+            c = rows.count()
+        except Exception:
+            c = None
+        if c == last and c is not None:
             estable += 1
         else:
             estable = 0
         last = c
-
         if estable >= 3:
-            log("[SEAAP] Tabla real estable.")
+            log(f"[SEAAP] Tabla estable con {c} fila(s).")
             return True
+        page.wait_for_timeout(step_ms)
 
-        page.wait_for_timeout(150)
-
-    log("[WARN SEAAP] La tabla no logró estabilidad total, pero seguimos.")
+    try:
+        c_final = rows.count()
+    except Exception:
+        c_final = -1
+    log(f"[WARN SEAAP] Tabla no estabilizó completamente, continuando (filas={c_final}).")
     return True
 
 
@@ -1282,6 +1277,11 @@ def seleccionar_fila_periodo_manual(page, periodo_manual, log):
 
     rows = page.locator("table.o_list_view tbody tr[data-id]")
     total = rows.count()
+    for _ in range(60):
+        if total > 0:
+            break
+        page.wait_for_timeout(250)
+        total = rows.count()
 
     if total == 0:
         log("[SEAAP][ERROR] No hay filas en la tabla.")
