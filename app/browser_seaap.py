@@ -288,6 +288,67 @@ def clear_search_facets(page, log):
         
         
         
+def _locator_autocomplete_input(page, placeholder):
+    loc = page.locator(
+        f"input.o-autocomplete--input[placeholder='{placeholder}'], "
+        f"input.o_form_input.ui-autocomplete-input[placeholder='{placeholder}'], "
+        f"input.o_form_input[placeholder='{placeholder}'], "
+        f"input[placeholder='{placeholder}']"
+    )
+    if loc.count() == 0:
+        return None
+    return loc.first
+
+
+def _locator_autocomplete_options(page):
+    return page.locator(
+        "ul.ui-autocomplete li a, "
+        ".o-autocomplete.dropdown .dropdown-menu.show a, "
+        ".o-autocomplete.dropdown .dropdown-menu.show .dropdown-item, "
+        ".dropdown-menu.show a.dropdown-item, "
+        ".dropdown-menu.show .dropdown-item, "
+        "[role='listbox'] [role='option'], "
+        "ul[role='listbox'] li, "
+        "div[role='listbox'] [role='option']"
+    )
+
+
+def _click_autocomplete_option(page, valor):
+    valor = str(valor).strip()
+    options = _locator_autocomplete_options(page)
+    if options.count() == 0:
+        return False
+    try:
+        texts = [t.strip() for t in options.all_inner_texts()]
+    except Exception:
+        try:
+            texts = [t.strip() for t in options.all_text_contents()]
+        except Exception:
+            texts = []
+    if texts:
+        for i, t in enumerate(texts):
+            if t.lower() == valor.lower():
+                try:
+                    options.nth(i).click(force=True)
+                    return True
+                except Exception:
+                    break
+    opcion = options.filter(has_text=valor)
+    if opcion.count() > 0:
+        try:
+            opcion.first.click(force=True)
+            return True
+        except Exception:
+            return False
+    if texts and len(texts) == 1 and texts[0].lower() == valor.lower():
+        try:
+            options.first.click(force=True)
+            return True
+        except Exception:
+            return False
+    return False
+
+
 # ============================================================
 # SELECCIONAR TIPO DE CENTRO POBLADO (URBANO / RURAL)
 # ============================================================
@@ -337,14 +398,24 @@ def seleccionar_tipo_centro_poblado(page, tipo, log):
             page.wait_for_timeout(2500)
 
             # Verificar que “Centro poblado” está listo
-            cp = page.locator(
-                "input.o_form_input.ui-autocomplete-input[placeholder='Centro poblado']"
-            )
+            cp = _locator_autocomplete_input(page, "Centro poblado")
+            if cp is None:
+                cp = page.locator("input#centropoblado_id_0").first if page.locator("input#centropoblado_id_0").count() else None
+            if cp is None:
+                log("[SEAAP][WARN] El campo 'Centro poblado' aún no está disponible. Reintentando…")
+                continue
 
             # A veces el input desaparece momentáneamente. Esperamos a que regrese.
             cargado = False
             for _ in range(20):  # 20 × 150 ms = 3 segundos
-                if cp.count() > 0:
+                try:
+                    _ = cp.input_value()
+                    cargado = True
+                    break
+                except Exception:
+                    pass
+                if page.locator("input#centropoblado_id_0").count() > 0:
+                    cp = page.locator("input#centropoblado_id_0").first
                     cargado = True
                     break
                 page.wait_for_timeout(150)
@@ -354,7 +425,7 @@ def seleccionar_tipo_centro_poblado(page, tipo, log):
                 continue
 
             # Verificar que no tenga valor residual
-            val = cp.first.input_value().strip()
+            val = cp.input_value().strip()
             if val:
                 log(f"[SEAAP][WARN] Centro poblado quedó con valor '{val}'. Reintentando…")
                 continue
@@ -425,15 +496,10 @@ def seleccionar_autocomplete_por_placeholder(page, placeholder, valor, log, max_
     # ============================================================
     # LOCALIZAR INPUT
     # ============================================================
-    inp = page.locator(
-        f"input.o_form_input.ui-autocomplete-input[placeholder='{placeholder}']"
-    )
-
-    if inp.count() == 0:
+    inp = _locator_autocomplete_input(page, placeholder)
+    if inp is None:
         log(f"[SEAAP][ERROR] No se encontró input con placeholder '{placeholder}'.")
         return False
-
-    inp = inp.first
 
     # ============================================================
     # 0. VERIFICACIÓN INTELIGENTE
@@ -471,10 +537,13 @@ def seleccionar_autocomplete_por_placeholder(page, placeholder, valor, log, max_
             watchdog_recovery(page, log)
 
             # abrir menú con ArrowDown
-            inp.press("ArrowDown")
+            try:
+                inp.press("ArrowDown")
+            except Exception:
+                pass
             page.wait_for_timeout(300)
 
-            menu_items = page.locator("ul.ui-autocomplete li a")
+            menu_items = _locator_autocomplete_options(page)
 
             # esperar menú
             for _ in range(80):
@@ -487,7 +556,10 @@ def seleccionar_autocomplete_por_placeholder(page, placeholder, valor, log, max_
                 continue
 
             # SELECCIÓN ROBUSTA (Exacta > Parcial)
-            texts = menu_items.all_inner_texts()
+            try:
+                texts = menu_items.all_inner_texts()
+            except Exception:
+                texts = menu_items.all_text_contents()
             idx_exact = -1
             for idx, t in enumerate(texts):
                 if t.strip() == valor:
@@ -547,12 +619,9 @@ def seleccionar_autocomplete_por_placeholder(page, placeholder, valor, log, max_
         log("[SEAAP][RECOVERY] Reintentando Zona y luego Manzana…")
 
         try:
-            zona_inp = page.locator(
-                "input.o_form_input.ui-autocomplete-input[placeholder='Zona']"
-            )
-
-            if zona_inp.count():
-                valor_zona = zona_inp.first.input_value().strip()
+            zona_inp = _locator_autocomplete_input(page, "Zona")
+            if zona_inp is not None:
+                valor_zona = zona_inp.input_value().strip()
                 if valor_zona:
                     if seleccionar_autocomplete_por_placeholder(
                         page, "Zona", valor_zona, log, max_retries=2
@@ -712,12 +781,7 @@ def seleccionar_many2one(page, log, label_text, valor_a_escribir):
     container = label.locator("xpath=../../..")
 
     # 3. Localizar el input many2one real
-    inp = container.locator("input.o_form_input.ui-autocomplete-input")
-
-    # fallback por si el DOM varía
-    if inp.count() == 0:
-        inp = page.locator("input.o_form_input.ui-autocomplete-input").first
-
+    inp = container.locator("input.o-autocomplete--input, input.o_form_input.ui-autocomplete-input, input.o_form_input, input").first
     if inp.count() == 0:
         raise RuntimeError(f"No se encontró input many2one para '{label_text}'.")
 
@@ -733,7 +797,7 @@ def seleccionar_many2one(page, log, label_text, valor_a_escribir):
     page.wait_for_timeout(200)
 
     # 5. Menú autocomplete
-    menu = page.locator(".ui-autocomplete.ui-menu li a")
+    menu = _locator_autocomplete_options(page)
 
     for _ in range(40):
         if menu.count() > 0:
@@ -761,14 +825,10 @@ def verificar_campo_autocomplete(page, placeholder, valor_esperado, log):
     """
     valor_esperado = str(valor_esperado).strip()
 
-    inp = page.locator(
-        f"input.o_form_input.ui-autocomplete-input[placeholder='{placeholder}']"
-    )
-
-    if inp.count() == 0:
+    inp = _locator_autocomplete_input(page, placeholder)
+    if inp is None:
         log(f"[SEAAP][ERROR] No se encontró input para verificar '{placeholder}'.")
         return False
-
     valor_actual = inp.input_value().strip()
 
     # Verificación exacta
@@ -1160,16 +1220,10 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
     valor = str(valor).strip()
     log(f"[ROBUST] Seleccionando '{valor}' en '{placeholder}'…")
 
-    # localizar input
-    inp = page.locator(
-        f"input.o_form_input.ui-autocomplete-input[placeholder='{placeholder}']"
-    )
-
-    if inp.count() == 0:
+    inp = _locator_autocomplete_input(page, placeholder)
+    if inp is None:
         log(f"[ROBUST][ERROR] Input '{placeholder}' no encontrado.")
         return False
-
-    inp = inp.first
 
     is_sector = (placeholder.lower() == "sector")
     is_cp = (placeholder.lower() == "centro poblado")
@@ -1198,8 +1252,7 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
         for ch in valor:
             inp.type(ch, delay=90)
 
-        # esperar aparición del menú
-        menu = page.locator("ul.ui-autocomplete li a")
+        menu = _locator_autocomplete_options(page)
 
         # rural necesita más tiempo para que el menú realmente aparezca
         max_loops = 50 if is_cp else 40  # rural más lento
@@ -1223,7 +1276,10 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
 
         # fallback rural cuando solo aparece una opción
         if opcion.count() == 0:
-            opciones = menu.all_inner_texts()
+            try:
+                opciones = menu.all_inner_texts()
+            except Exception:
+                opciones = menu.all_text_contents()
             if len(opciones) == 1 and opciones[0].strip().lower() == valor.lower():
                 try:
                     menu.first.click(force=True)
@@ -1443,7 +1499,9 @@ def limpiar_formulario(page, log):
         Espera hasta que el campo quede vacío.
         """
         campo = page.locator(
-            f"input.o_form_input.ui-autocomplete-input[placeholder='{placeholder}']"
+            f"input.o-autocomplete--input[placeholder='{placeholder}'], "
+            f"input.o_form_input.ui-autocomplete-input[placeholder='{placeholder}'], "
+            f"input[placeholder='{placeholder}']"
         )
 
         for _ in range(max_wait_ms // 300):
@@ -1545,7 +1603,9 @@ def limpiar_formulario(page, log):
         # =======================================================
         for placeholder in campos:
             campo = page.locator(
-                f"input.o_form_input.ui-autocomplete-input[placeholder='{placeholder}']"
+                f"input.o-autocomplete--input[placeholder='{placeholder}'], "
+                f"input.o_form_input.ui-autocomplete-input[placeholder='{placeholder}'], "
+                f"input[placeholder='{placeholder}']"
             )
             if campo.count():
                 val = campo.input_value().strip()
