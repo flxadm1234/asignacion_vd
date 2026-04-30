@@ -1272,10 +1272,22 @@ def seleccionar_fila_periodo_manual(page, periodo_manual, log):
         log("[SEAAP][ERROR] No hay filas en la tabla.")
         return False
 
+    target_norm = str(periodo_seaap or "").strip().lower()
+
     for i in range(total):
         row = rows.nth(i)
         cell = row.locator("td[name='periodo_carga'], td[data-field='periodo_carga']")
         if cell.count() == 0:
+            try:
+                row_text = (row.inner_text() or "").strip()
+            except Exception:
+                row_text = ""
+            if target_norm and (target_norm in row_text.lower()):
+                if _abrir_formulario_fila(page, row, log, intentos=3):
+                    log("[SEAAP] Fila seleccionada y abierta en formulario (match por texto).")
+                    return True
+                log("[SEAAP][WARN] Fila encontrada (match por texto) pero no se abrió el formulario.")
+                return False
             continue
         try:
             periodo = (cell.first.inner_text() or "").strip()
@@ -1285,7 +1297,7 @@ def seleccionar_fila_periodo_manual(page, periodo_manual, log):
             except Exception:
                 continue
 
-        if periodo == periodo_seaap:
+        if periodo.strip().lower() == target_norm:
             if _abrir_formulario_fila(page, row, log, intentos=3):
                 log("[SEAAP] Fila seleccionada y abierta en formulario.")
                 return True
