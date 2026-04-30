@@ -308,8 +308,13 @@ def seleccionar_tipo_centro_poblado(page, tipo, log):
 
     log(f"[SEAAP] Seleccionando Tipo Centro Poblado: {tipo_norm}")
 
-    selector = f"input.o_form_radio[value='{tipo_norm}']"
-    radio = page.locator(selector)
+    radio = page.locator(
+        f"div[name='tipo_centropoblado'] input.o_radio_input[data-value='{tipo_norm}'], "
+        f"div[name='tipo_centropoblado'] input[type='radio'][data-value='{tipo_norm}'], "
+        f"input.o_radio_input[data-value='{tipo_norm}'], "
+        f"input[type='radio'][data-value='{tipo_norm}'], "
+        f"input#radio_field_1_{tipo_norm}"
+    )
 
     if radio.count() == 0:
         log(f"[SEAAP][ERROR] No existe el radio button '{tipo_norm}'.")
@@ -1456,13 +1461,20 @@ def limpiar_formulario(page, log):
         log("[SEAAP] Limpieza del formulario iniciada…")
 
         # =======================================================
-        # 1. CLIC EN RURAL
+        # 1. CLIC EN RURAL (si existe)
         # =======================================================
-        rural = page.locator("input.o_form_radio[value='rural']")
+        rural = page.locator(
+            "div[name='tipo_centropoblado'] input.o_radio_input[data-value='rural'], "
+            "input.o_radio_input[data-value='rural'], "
+            "input#radio_field_1_rural"
+        )
         if rural.count():
-            rural.first.click(force=True)
-            log("[SEAAP] Marcado 'Rural'.")
-            page.wait_for_timeout(1200)   # antes 800 → ahora más robusto
+            try:
+                rural.first.click(force=True)
+                log("[SEAAP] Marcado 'Rural'.")
+                page.wait_for_timeout(1200)
+            except Exception:
+                log("[SEAAP][WARN] No se pudo clickear 'Rural'.")
         else:
             log("[SEAAP][WARN] No existe radio 'rural'.")
 
@@ -1474,13 +1486,20 @@ def limpiar_formulario(page, log):
         page.wait_for_timeout(1000)   # Espera grande inicial
 
         # =======================================================
-        # 2. CLIC EN URBANO
+        # 2. CLIC EN URBANO (si existe)
         # =======================================================
-        urbano = page.locator("input.o_form_radio[value='urbano']")
+        urbano = page.locator(
+            "div[name='tipo_centropoblado'] input.o_radio_input[data-value='urbano'], "
+            "input.o_radio_input[data-value='urbano'], "
+            "input#radio_field_1_urbano"
+        )
         if urbano.count():
-            urbano.first.click(force=True)
-            log("[SEAAP] Marcado 'Urbano'.")
-            page.wait_for_timeout(800)   # antes 800 → ahora mayor
+            try:
+                urbano.first.click(force=True)
+                log("[SEAAP] Marcado 'Urbano'.")
+                page.wait_for_timeout(800)
+            except Exception:
+                log("[SEAAP][WARN] No se pudo clickear 'Urbano'.")
         else:
             log("[SEAAP][WARN] No existe radio 'urbano'.")
 
@@ -1511,9 +1530,12 @@ def limpiar_formulario(page, log):
 
             # SEGUNDO INTENTO
             if urbano.count():
-                urbano.first.click(force=True)
-                log("[SEAAP] Segundo toque a 'Urbano'.")
-                page.wait_for_timeout(1500)
+                try:
+                    urbano.first.click(force=True)
+                    log("[SEAAP] Segundo toque a 'Urbano'.")
+                    page.wait_for_timeout(1500)
+                except Exception:
+                    pass
 
             for placeholder in campos:
                 esperar_refresco_campo(placeholder)
