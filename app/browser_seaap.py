@@ -387,47 +387,26 @@ def seleccionar_tipo_centro_poblado(page, tipo, log):
             log(f"[SEAAP] Intento {intento}/3 → seleccionar '{tipo_norm}'")
 
             radio.first.click(force=True)
-            page.wait_for_timeout(300)
+            page.wait_for_timeout(150)
 
             # Cerrar modales o overlays
             cerrar_todos_los_modales(page, log)
             watchdog_recovery(page, log)
 
-            # Espera grande para que cargue “Centro poblado”
-            log("[SEAAP] Esperando 2.5 segundos para recarga...")
-            page.wait_for_timeout(2500)
-
-            # Verificar que “Centro poblado” está listo
-            cp = _locator_autocomplete_input(page, "Centro poblado")
-            if cp is None:
-                cp = page.locator("input#centropoblado_id_0").first if page.locator("input#centropoblado_id_0").count() else None
-            if cp is None:
-                log("[SEAAP][WARN] El campo 'Centro poblado' aún no está disponible. Reintentando…")
-                continue
-
-            # A veces el input desaparece momentáneamente. Esperamos a que regrese.
-            cargado = False
-            for _ in range(20):  # 20 × 150 ms = 3 segundos
-                try:
-                    _ = cp.input_value()
-                    cargado = True
-                    break
-                except Exception:
-                    pass
-                if page.locator("input#centropoblado_id_0").count() > 0:
+            cp = None
+            for _ in range(25):  # hasta 2.5s
+                cp = _locator_autocomplete_input(page, "Centro poblado")
+                if cp is None and page.locator("input#centropoblado_id_0").count() > 0:
                     cp = page.locator("input#centropoblado_id_0").first
-                    cargado = True
-                    break
-                page.wait_for_timeout(150)
-
-            if not cargado:
+                if cp is not None:
+                    try:
+                        _ = cp.input_value()
+                        break
+                    except Exception:
+                        cp = None
+                page.wait_for_timeout(100)
+            if cp is None:
                 log("[SEAAP][WARN] El campo 'Centro poblado' aún no está disponible. Reintentando…")
-                continue
-
-            # Verificar que no tenga valor residual
-            val = cp.input_value().strip()
-            if val:
-                log(f"[SEAAP][WARN] Centro poblado quedó con valor '{val}'. Reintentando…")
                 continue
 
             log(f"[SEAAP] Tipo Centro Poblado '{tipo_norm}' seleccionado exitosamente.")
@@ -1155,7 +1134,7 @@ def buscar_dni_nino(page, dni, log):
         if not selected:
             log("[SEAAP][WARN] No se pudo seleccionar Niño por teclado. Usando Enter.")
             input_box.press("Enter")
-        page.wait_for_timeout(800)
+        page.wait_for_timeout(250)
 
     # esperar tabla real
     wait_for_real_child_table(page, log)
@@ -1209,7 +1188,7 @@ def presionar_editar(page, log):
     raise RuntimeError("No se encontró el botón Editar.")
 
 def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
-                                     intentos=4, espera_inicial=700):
+                                     intentos=3, espera_inicial=350):
     """
     Selector definitivo y robusto para Odoo + jQuery UI.
     Incluye manejo especial para:
@@ -1228,13 +1207,6 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
     is_sector = (placeholder.lower() == "sector")
     is_cp = (placeholder.lower() == "centro poblado")
 
-    # ============================================================
-    # ESPECIAL: después de seleccionar RURAL, Odoo refresca lento
-    # ============================================================
-    if is_cp:
-        log("[ROBUST][RURAL] Esperando 2.2 segundos por recarga…")
-        page.wait_for_timeout(2200)
-
     def intento_unico():
         # si ya contiene el valor esperado → éxito instantáneo
         val_actual = inp.input_value().strip()
@@ -1246,20 +1218,22 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
         inp.click(force=True)
         inp.press("Control+A")
         inp.press("Backspace")
-        page.wait_for_timeout(180)
+        page.wait_for_timeout(80)
 
-        # escribir lento letra por letra
+        # escribir letra por letra
         for ch in valor:
-            inp.type(ch, delay=90)
+            inp.type(ch, delay=40)
 
+        try:
+            inp.press("ArrowDown")
+        except Exception:
+            pass
         menu = _locator_autocomplete_options(page)
-
-        # rural necesita más tiempo para que el menú realmente aparezca
-        max_loops = 50 if is_cp else 40  # rural más lento
-        for _ in range(max_loops):
+        max_wait_ms = 2500 if is_cp else 2000
+        for _ in range(max(1, max_wait_ms // 80)):
             if menu.count() > 0:
                 break
-            page.wait_for_timeout(120)
+            page.wait_for_timeout(80)
 
         # si NO aparece menú:
         if menu.count() == 0:
@@ -1293,7 +1267,7 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
             except:
                 return False
 
-        page.wait_for_timeout(800)
+        page.wait_for_timeout(250)
 
         # verificación
         final = inp.input_value().strip()
@@ -1303,7 +1277,7 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
 
         # segundo chequeo en flujos rurales
         if is_cp:
-            page.wait_for_timeout(1200)
+            page.wait_for_timeout(500)
             final2 = inp.input_value().strip()
             if final2.lower() == valor.lower():
                 log(f"[ROBUST][RURAL] '{placeholder}' estable en '{final2}' ✓")
@@ -1326,10 +1300,10 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
             return True
 
         # descanso entre intentos
-        if is_cp:   # rural
-            page.wait_for_timeout(2300)
+        if is_cp:
+            page.wait_for_timeout(400)
         else:
-            page.wait_for_timeout(espera_inicial + (i * 300))
+            page.wait_for_timeout(espera_inicial + (i * 150))
 
     # ============================================================
     # RECUPERACIÓN FINAL
@@ -1518,6 +1492,51 @@ def limpiar_formulario(page, log):
     try:
         log("[SEAAP] Limpieza del formulario iniciada…")
 
+        campos = ["Centro poblado", "Zona", "Manzana", "Sector", "Actor Social"]
+
+        def clear_fast(placeholder):
+            inp = _locator_autocomplete_input(page, placeholder)
+            if inp is None:
+                return True
+            try:
+                inp.click(force=True)
+                inp.press("Control+A")
+                inp.press("Backspace")
+                page.wait_for_timeout(60)
+                try:
+                    inp.press("Tab")
+                except Exception:
+                    pass
+                return True
+            except Exception:
+                return False
+
+        cleared_any = False
+        for p in campos:
+            try:
+                val0 = ""
+                inp0 = _locator_autocomplete_input(page, p)
+                if inp0 is not None:
+                    val0 = (inp0.input_value() or "").strip()
+                if val0:
+                    if clear_fast(p):
+                        cleared_any = True
+            except Exception:
+                pass
+
+        if cleared_any:
+            page.wait_for_timeout(120)
+
+        todo_ok = True
+        for placeholder in campos:
+            ok = esperar_refresco_campo(placeholder, max_wait_ms=1200)
+            if not ok:
+                todo_ok = False
+                break
+        if todo_ok:
+            log("[SEAAP] Formulario limpiado exitosamente.")
+            return True
+
         # =======================================================
         # 1. CLIC EN RURAL (si existe)
         # =======================================================
@@ -1530,7 +1549,7 @@ def limpiar_formulario(page, log):
             try:
                 rural.first.click(force=True)
                 log("[SEAAP] Marcado 'Rural'.")
-                page.wait_for_timeout(1200)
+                page.wait_for_timeout(200)
             except Exception:
                 log("[SEAAP][WARN] No se pudo clickear 'Rural'.")
         else:
@@ -1541,7 +1560,7 @@ def limpiar_formulario(page, log):
 
         # Esperar refresco profundo
         log("[SEAAP] Esperando refresco tras seleccionar 'Rural'…")
-        page.wait_for_timeout(1000)   # Espera grande inicial
+        page.wait_for_timeout(250)
 
         # =======================================================
         # 2. CLIC EN URBANO (si existe)
@@ -1555,7 +1574,7 @@ def limpiar_formulario(page, log):
             try:
                 urbano.first.click(force=True)
                 log("[SEAAP] Marcado 'Urbano'.")
-                page.wait_for_timeout(800)
+                page.wait_for_timeout(200)
             except Exception:
                 log("[SEAAP][WARN] No se pudo clickear 'Urbano'.")
         else:
@@ -1565,12 +1584,11 @@ def limpiar_formulario(page, log):
         watchdog_recovery(page, log)
 
         log("[SEAAP] Esperando refresco tras volver a 'Urbano'…")
-        page.wait_for_timeout(1000)       # pausa más larga
+        page.wait_for_timeout(250)
 
         # =======================================================
         # 3. VERIFICAR Y REINTENTAR SI ES NECESARIO
         # =======================================================
-        campos = ["Centro poblado", "Zona", "Manzana", "Sector", "Actor Social"]
         todo_ok = True
 
         for placeholder in campos:
@@ -1582,7 +1600,7 @@ def limpiar_formulario(page, log):
         if not todo_ok:
             log("[SEAAP][INFO] Reintentando limpieza del formulario una vez más…")
 
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(400)
             cerrar_todos_los_modales(page, log)
             watchdog_recovery(page, log)
 
@@ -1591,7 +1609,7 @@ def limpiar_formulario(page, log):
                 try:
                     urbano.first.click(force=True)
                     log("[SEAAP] Segundo toque a 'Urbano'.")
-                    page.wait_for_timeout(1500)
+                    page.wait_for_timeout(500)
                 except Exception:
                     pass
 
