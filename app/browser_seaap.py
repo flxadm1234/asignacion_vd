@@ -902,23 +902,55 @@ def presionar_guardar(page, log):
 # ESPERA DEFINITIVA: TABLA REAL (NO LA DE 50 FILAS)
 # ============================================================
 def wait_for_real_child_table(page, log, timeout_ms=20000):
-    rows = page.locator("table.o_list_view tbody tr.o_data_row[data-id], table.o_list_view tbody tr[data-id]")
+    rows = page.locator(
+        "tbody.ui-sortable tr.o_data_row[data-id], "
+        "table.o_list_table tbody tr.o_data_row[data-id], "
+        "table.o_list_view tbody tr.o_data_row[data-id], "
+        "table.o_list_table tbody tr[data-id], "
+        "table.o_list_view tbody tr[data-id]"
+    )
+    loading = page.locator(".o_loading, .o_view_loading, .o_list_view_loading, .o_spinner")
+    no_rows = page.locator(".o_view_nocontent, .o_nocontent_help, .o_list_nocontent, .o_empty")
 
     log("[SEAAP] Esperando la tabla de resultados…")
 
-    appeared = False
     step_ms = 200
     for _ in range(max(1, timeout_ms // step_ms)):
         try:
-            if rows.count() > 0:
-                appeared = True
-                break
+            if loading.count() > 0:
+                page.wait_for_timeout(step_ms)
+                continue
         except Exception:
             pass
+
+        try:
+            c = rows.count()
+        except Exception:
+            c = 0
+
+        if c > 0:
+            break
+
+        try:
+            if no_rows.count() > 0:
+                log("[SEAAP] Vista sin resultados detectada.")
+                return False
+        except Exception:
+            pass
+
         page.wait_for_timeout(step_ms)
 
-    if not appeared:
+    try:
+        c0 = rows.count()
+    except Exception:
+        c0 = 0
+
+    if c0 <= 0:
         log("[ERROR SEAAP] No se detectaron filas en la tabla dentro del tiempo de espera.")
+        try:
+            log(f"[SEAAP][DEBUG] URL actual: {page.url}")
+        except Exception:
+            pass
         return False
 
     last = None
@@ -1275,7 +1307,13 @@ def seleccionar_fila_periodo_manual(page, periodo_manual, log):
     periodo_seaap = normalizar_periodo_seaap(periodo_manual)
     log(f"[SEAAP] Buscando fila con periodo: {periodo_seaap}")
 
-    rows = page.locator("table.o_list_view tbody tr[data-id]")
+    rows = page.locator(
+        "tbody.ui-sortable tr.o_data_row[data-id], "
+        "table.o_list_table tbody tr.o_data_row[data-id], "
+        "table.o_list_view tbody tr.o_data_row[data-id], "
+        "table.o_list_table tbody tr[data-id], "
+        "table.o_list_view tbody tr[data-id]"
+    )
     total = rows.count()
     for _ in range(60):
         if total > 0:
