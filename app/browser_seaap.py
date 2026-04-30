@@ -628,12 +628,42 @@ def _abrir_formulario_fila(page, row, log, intentos=3):
             cell = row.locator(sel)
             if cell.count():
                 try:
-                    cell.first.click(force=True, timeout=60_000)
-                    page.wait_for_timeout(1200)
+                    c = cell.first
+                    try:
+                        c.scroll_into_view_if_needed(timeout=5000)
+                    except Exception:
+                        pass
+
+                    c.click(force=True, timeout=60_000)
+                    page.wait_for_timeout(800)
+                    cerrar_todos_los_modales(page, log)
+                    watchdog_recovery(page, log)
+
+                    if page.locator(".o_form_view").count() or page.locator("button.o_form_button_edit").count():
+                        log(f"[SEAAP] Fila abierta en formulario (clic en {sel}).")
+                        return True
+
+                    if "periodo_carga" in sel:
+                        try:
+                            page.keyboard.press("Enter")
+                        except Exception:
+                            pass
+                        page.wait_for_timeout(800)
+                        cerrar_todos_los_modales(page, log)
+                        watchdog_recovery(page, log)
+                        if page.locator(".o_form_view").count() or page.locator("button.o_form_button_edit").count():
+                            log("[SEAAP] Fila abierta en formulario (clic en periodo_carga + Enter).")
+                            return True
+
+                    try:
+                        c.dblclick(timeout=60_000)
+                    except Exception:
+                        row.dblclick(timeout=60_000)
+                    page.wait_for_timeout(900)
                     cerrar_todos_los_modales(page, log)
                     watchdog_recovery(page, log)
                     if page.locator(".o_form_view").count() or page.locator("button.o_form_button_edit").count():
-                        log(f"[SEAAP] Fila abierta en formulario (clic en {sel}).")
+                        log(f"[SEAAP] Fila abierta en formulario (doble clic en {sel}).")
                         return True
                 except Exception:
                     cerrar_todos_los_modales(page, log)
