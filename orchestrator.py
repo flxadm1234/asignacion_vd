@@ -15,10 +15,7 @@ from automation import load_accounts_from_json
 BASE_DIR = Path(__file__).resolve().parent
 PROJ2_DIR = BASE_DIR / "proyecto 2"
 
-SEAAP_WIZARD_URL = (
-    "https://visitasdomiciliarias.minsa.gob.pe/web"
-    "#view_type=form&model=actividades.reporte.visitas.ninos.pivot.wizard&menu_id=353&action=1261"
-)
+SEAAP_REPORT_URL = "https://visitasdomiciliarias.minsa.gob.pe/odoo/action-339/172"
 WHADOX_LOGIN_URL = "https://sinanemia.site/login1.php"
 WHADOX_MANT_URL = "https://sinanemia.site/appc/#/Mantenimiento"
 
@@ -48,6 +45,25 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
     if ubigeo:
         accounts = [a for a in accounts if str(a.get("name")) == str(ubigeo)]
     _default_log(f"[PIPELINE] Ejecutando SEAAP→Whadox para {len(accounts)} cuenta(s).")
+
+    raw = (periodo_bd or "").strip()
+    month_label = None
+    year_label = None
+    month_num = None
+    try:
+        if len(raw) >= 10 and raw[4] == "-" and raw[7] == "-":
+            year_label = raw[0:4]
+            month_num = int(raw[5:7])
+            labels = {
+                1: "Ene", 2: "Feb", 3: "Mar", 4: "Abr", 5: "May", 6: "Jun",
+                7: "Jul", 8: "Ago", 9: "Set", 10: "Oct", 11: "Nov", 12: "Dic",
+            }
+            month_label = labels.get(month_num)
+    except Exception:
+        month_label = None
+        year_label = None
+        month_num = None
+
     with sync_playwright() as p:
         # Lanzar navegador respetando 'headless' y con fallback si no hay DISPLAY
         browser_args = [
@@ -80,8 +96,8 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
             pass
         for acc in accounts:
             try:
-                _default_log(f"[SEAAP] [{acc.get('name')}] Abriendo asistente de exportación…")
-                page.goto(SEAAP_WIZARD_URL, wait_until="domcontentloaded", timeout=180_000)
+                _default_log(f"[SEAAP] [{acc.get('name')}] Abriendo reportes…")
+                page.goto(SEAAP_REPORT_URL, wait_until="domcontentloaded", timeout=180_000)
                 # Login si aparece
                 if page.locator("input[type=password]").count():
                     user = acc.get("seaap_user") or ""
@@ -94,28 +110,48 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                     if btn.count():
                         btn.first.click()
                         page.wait_for_timeout(2500)
-                # Buscar botón exportar
-                EXPORT = [
-                    'button:has-text("Generar Excel")',
-                    'button.btn-sm.oe_highlight:has-text("Generar Excel")',
-                    'span:has-text("Generar Excel")',
-                    'button:has-text("Excel")',
-                    'button:has-text("Exportar")',
-                    'button:has-text("Descargar")',
-                    "button.btn-primary",
-                    ".o_form_button_save",
-                ]
-                export_btn = None
-                for intento in range(8):
-                    for sel in EXPORT:
-                        if page.locator(sel).count():
-                            export_btn = page.locator(sel).first
-                            break
-                    if export_btn:
-                        break
-                    page.wait_for_timeout(2000)
-                if not export_btn:
-                    _default_log(f"[SEAAP] [{acc.get('name')}] No se encontró botón de exportación.")
+
+                try:
+                    page.goto(SEAAP_REPORT_URL, wait_until="domcontentloaded", timeout=180_000)
+                except Exception:
+                    pass
+                page.wait_for_timeout(1200)
+
+                if month_label:
+                    month_sel = page.locator("select#month_0, div[name='month'] select.o_input, div[name='month'] select").first
+                    if month_sel.count():
+                        try:
+                            month_sel.select_option(label=month_label)
+                        except Exception:
+                            try:
+                                month_sel.select_option(value=str(month_num))
+                            except Exception:
+                                try:
+                                    month_sel.select_option(value=f"\"{month_num}\"")
+                                except Exception:
+                                    pass
+                        page.wait_for_timeout(700)
+
+                if year_label:
+                    year_sel = page.locator("select#year_0, div[name='year'] select.o_input, div[name='year'] select").first
+                    if year_sel.count():
+                        try:
+                            year_sel.select_option(label=year_label)
+                            page.wait_for_timeout(700)
+                        except Exception:
+                            pass
+                    else:
+                        year_inp = page.locator("div[name='year'] input.o_input, div[name='year'] input").first
+                        if year_inp.count():
+                            try:
+                                year_inp.fill(year_label)
+                                page.wait_for_timeout(700)
+                            except Exception:
+                                pass
+
+                export_btn = page.locator("button[name='do_report_2']:has-text('Generar Excel'), button.btn.btn-primary[name='do_report_2'], button:has-text('Generar Excel')").first
+                if export_btn.count() == 0:
+                    _default_log(f"[SEAAP] [{acc.get('name')}] No se encontró botón 'Generar Excel'.")
                     continue
                 _default_log(f"[SEAAP] [{acc.get('name')}] Descargando Excel…")
                 with page.expect_download(timeout=180_000) as dl_info:
