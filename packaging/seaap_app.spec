@@ -6,15 +6,15 @@ from PyInstaller.utils.hooks import collect_submodules
 block_cipher = None
 
 project_root = Path.cwd()
-entry = str(project_root / "gui_app.py")
+entry = str(project_root / "app" / "gui_app.py")
 
 datas = []
 proj2 = project_root / "proyecto 2"
 if proj2.exists():
     datas.append((str(proj2), "proyecto 2"))
-acc = project_root / "accounts.json"
+acc = project_root / "app" / "accounts.json"
 if acc.exists():
-    datas.append((str(acc), "."))
+    datas.append((str(acc), "app"))
 
 mp_env = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
 mp_candidates = []
@@ -33,7 +33,7 @@ rthooks = [str(project_root / "packaging" / "rthook_playwright.py")]
 
 a = Analysis(
     [entry],
-    pathex=[str(project_root)],
+    pathex=[str(project_root), str(project_root / "app")],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,

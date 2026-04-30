@@ -19,3 +19,5 @@ logs/
 
 accounts.json
 config.json
+app/accounts.json
+app/config.json
