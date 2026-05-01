@@ -17,6 +17,8 @@ PROJ2_DIR = BASE_DIR / "proyecto 2"
 
 SEAAP_REPORT_URL = "https://visitasdomiciliarias.minsa.gob.pe/odoo/action-339/228"
 SEAAP_LOGOUT_URL = "https://visitasdomiciliarias.minsa.gob.pe/web/session/logout"
+SEAAP_BASE_URL = "https://visitasdomiciliarias.minsa.gob.pe/"
+SEAAP_LOGIN_URL = "https://visitasdomiciliarias.minsa.gob.pe/web/login"
 WHADOX_LOGIN_URL = "https://sinanemia.site/login1.php"
 WHADOX_MANT_URL = "https://sinanemia.site/appc/#/Mantenimiento"
 
@@ -261,6 +263,93 @@ def _seaap_logout(page, log):
     except Exception:
         return False
 
+def _seaap_login(page, user: str, pwd: str, log):
+    for intento in range(1, 4):
+        try:
+            log(f"[SEAAP] Login estricto. Intento {intento}/3…")
+            _seaap_logout(page, log)
+            page.goto(_sanitize_url(SEAAP_LOGIN_URL), wait_until="domcontentloaded", timeout=90_000)
+            form = page.locator("form.oe_login_form").first
+            if form.count() == 0:
+                form = page.locator("form[action='/web/login'], form:has(#login):has(#password)").first
+            try:
+                form.wait_for(state="visible", timeout=30_000)
+            except Exception:
+                pass
+
+            user_inp = form.locator("#login, input[name='login']").first
+            pwd_inp = form.locator("#password, input[name='password'][type='password']").first
+            btn = form.locator("button[type='submit'], button:has-text('Iniciar sesión'), button:has-text('Ingresar')").first
+
+            if user_inp.count() == 0 or pwd_inp.count() == 0:
+                log("[SEAAP][ERROR] No se encontraron inputs #login/#password en el formulario.")
+                try:
+                    page.wait_for_timeout(1200)
+                except Exception:
+                    pass
+                continue
+
+            try:
+                user_inp.click(force=True)
+            except Exception:
+                pass
+            user_inp.fill(str(user or ""))
+            try:
+                pwd_inp.click(force=True)
+            except Exception:
+                pass
+            pwd_inp.fill(str(pwd or ""))
+
+            if btn.count():
+                try:
+                    btn.click()
+                except Exception:
+                    try:
+                        btn.click(force=True)
+                    except Exception:
+                        pass
+            else:
+                try:
+                    pwd_inp.press("Enter")
+                except Exception:
+                    pass
+
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=60_000)
+            except Exception:
+                pass
+            try:
+                page.wait_for_url("**/odoo**", timeout=30_000)
+            except Exception:
+                pass
+
+            try:
+                if page.locator(".o_main_navbar, nav.o_main_navbar").count():
+                    log("[SEAAP] Login OK (navbar detectada).")
+                    return True
+            except Exception:
+                pass
+
+            try:
+                if page.locator("form.oe_login_form").count() == 0:
+                    log("[SEAAP] Login OK (formulario no presente).")
+                    return True
+            except Exception:
+                pass
+
+            log("[SEAAP][WARN] Login no confirmado (formulario sigue). Reintentando…")
+            try:
+                page.wait_for_timeout(1500)
+            except Exception:
+                pass
+        except Exception as e:
+            log(f"[SEAAP][ERROR] Login estricto falló: {e}")
+            try:
+                page.wait_for_timeout(1500)
+            except Exception:
+                pass
+    return False
+
 def _seaap_login_if_needed(page, user: str, pwd: str, log):
     def _login_container():
         form = page.locator("form.oe_login_form, form[action='/web/login'], form:has(#login):has(#password)")
@@ -398,6 +487,9 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
             a for a in accounts
             if (str(a.get("ubigeo") or "").strip() == target) or (str(a.get("name") or "").strip() == target)
         ]
+        if len(accounts) > 1:
+            _default_log(f"[PIPELINE][ERROR] Hay {len(accounts)} cuentas que coinciden con ubigeo={target}. Debe quedar única.")
+            return
         if not accounts:
             _default_log(f"[PIPELINE][ERROR] No se encontró cuenta para ubigeo={target}. Verifica accounts.json.")
             return
@@ -458,9 +550,9 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                 user = acc.get("seaap_user") or ""
                 pwd = acc.get("seaap_password") or ""
                 _default_log(f"[SEAAP] [{acc.get('name')}] Usando usuario SEAAP: {user}")
-
-                _default_log(f"[SEAAP] [{acc.get('name')}] Cerrando sesión previa…")
-                _seaap_logout(page, _default_log)
+                if not _seaap_login(page, user, pwd, _default_log):
+                    _default_log(f"[SEAAP] [{acc.get('name')}] No se pudo iniciar sesión. Saltando cuenta.")
+                    continue
 
                 report_ok = False
                 for intento in range(1, 4):
@@ -472,14 +564,6 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                             page.goto(SEAAP_REPORT_URL, wait_until="networkidle", timeout=180_000)
                         except Exception as e_goto:
                             _default_log(f"[SEAAP] [{acc.get('name')}] Falló goto reportes: {e_goto}")
-
-                    if not _seaap_login_if_needed(page, user, pwd, _default_log):
-                        continue
-
-                    try:
-                        page.goto(SEAAP_REPORT_URL, wait_until="domcontentloaded", timeout=180_000)
-                    except Exception:
-                        pass
 
                     try:
                         page.wait_for_timeout(600)
@@ -752,6 +836,11 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                         _default_log(f"[WHADOX] [{acc.get('name')}] No se recibió respuesta AJAX en el tiempo esperado.")
                 else:
                     _default_log(f"[WHADOX] [{acc.get('name')}] Botón SUBIR no encontrado.")
+                try:
+                    page.goto(_sanitize_url(SEAAP_BASE_URL), wait_until="domcontentloaded", timeout=90_000)
+                except Exception:
+                    pass
+                _seaap_logout(page, _default_log)
             except Exception as e:
                 _default_log(f"[PIPELINE][ERROR] Cuenta {acc.get('name')}: {e}")
             finally:

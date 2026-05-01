@@ -61,7 +61,7 @@ class OrchestratorHandler(BaseHTTPRequestHandler):
 
             def _runner():
                 try:
-                    _default_log("[API] Orden GET /run recibida. Iniciando pipeline...")
+                    _default_log(f"[API] Orden GET /run recibida. headless={headless} periodo_bd={periodo_bd} periodo_manual={periodo_manual} ubigeo={ubigeo}")
                     db_cfg = _read_db_config_from_env()
                     conn = create_db_connection(db_cfg, _default_log)
                     req_id = None
@@ -117,7 +117,7 @@ class OrchestratorHandler(BaseHTTPRequestHandler):
 
             def _runner():
                 try:
-                    _default_log("[API] Recibida orden de ejecución (/run). Iniciando pipeline...")
+                    _default_log(f"[API] Orden POST /run recibida. headless={headless} periodo_bd={periodo_bd} periodo_manual={periodo_manual} ubigeo={ubigeo}")
                     db_cfg = _read_db_config_from_env()
                     conn = create_db_connection(db_cfg, _default_log)
                     req_id = None
