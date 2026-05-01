@@ -19,6 +19,7 @@ SEAAP_REPORT_URL = "https://visitasdomiciliarias.minsa.gob.pe/odoo/action-339/22
 SEAAP_LOGOUT_URL = "https://visitasdomiciliarias.minsa.gob.pe/web/session/logout"
 SEAAP_BASE_URL = "https://visitasdomiciliarias.minsa.gob.pe/"
 SEAAP_LOGIN_URL = "https://visitasdomiciliarias.minsa.gob.pe/es_419/web/login"
+SEAAP_ODOO_HOME_URL = "https://visitasdomiciliarias.minsa.gob.pe/odoo"
 WHADOX_LOGIN_URL = "https://sinanemia.site/login1.php"
 WHADOX_MANT_URL = "https://sinanemia.site/appc/#/Mantenimiento"
 
@@ -64,6 +65,80 @@ def _seaap_session_info(page):
             return None
     except Exception:
         return None
+
+def _seaap_open_detalle_nino(page, log) -> bool:
+    for intento in range(1, 4):
+        try:
+            log(f"[SEAAP] Abriendo reportes por menú (Detalle por Niño)… intento {intento}/3")
+            try:
+                page.goto(_sanitize_url(SEAAP_ODOO_HOME_URL), wait_until="domcontentloaded", timeout=120_000)
+            except Exception:
+                try:
+                    page.goto(_sanitize_url(SEAAP_ODOO_HOME_URL), wait_until="networkidle", timeout=120_000)
+                except Exception:
+                    pass
+
+            btn_more = page.locator(
+                "button.o-dropdown.dropdown-toggle:has(i.fa-plus), "
+                "button[title*='Menú']:has(i.fa-plus), "
+                "button:has(i.fa-plus)"
+            ).first
+            if btn_more.count() == 0:
+                try:
+                    page.wait_for_timeout(1200)
+                except Exception:
+                    pass
+                btn_more = page.locator(
+                    "button.o-dropdown.dropdown-toggle:has(i.fa-plus), "
+                    "button[title*='Menú']:has(i.fa-plus), "
+                    "button:has(i.fa-plus)"
+                ).first
+            if btn_more.count() == 0:
+                log("[SEAAP][ERROR] No se encontró el botón de menú (+).")
+                continue
+
+            try:
+                btn_more.click()
+            except Exception:
+                btn_more.click(force=True)
+
+            link_det = page.locator(
+                "a.o-dropdown-item[data-menu-xmlid='actividades_reporte.menu_reporte_visitas_ninos'], "
+                "a.o-dropdown-item[href='/odoo/action-339']:has-text('Detalle por Niño'), "
+                "a.o-dropdown-item:has-text('Detalle por Niño')"
+            ).first
+            try:
+                link_det.wait_for(state="visible", timeout=20_000)
+            except Exception:
+                pass
+            if link_det.count() == 0:
+                log("[SEAAP][ERROR] No se encontró el item 'Detalle por Niño' en el menú.")
+                continue
+
+            try:
+                link_det.click()
+            except Exception:
+                link_det.click(force=True)
+
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=60_000)
+            except Exception:
+                pass
+            try:
+                page.wait_for_selector(
+                    "button[name='do_report_2'], select#month_0, div[name='month'] select.o_input, div[name='month'] select",
+                    timeout=45_000,
+                )
+            except Exception:
+                pass
+            return True
+        except Exception as e:
+            log(f"[SEAAP][ERROR] Abrir 'Detalle por Niño' falló: {e}")
+            try:
+                page.wait_for_timeout(1500)
+            except Exception:
+                pass
+    return False
 
 def _seaap_download_excel(page, export_btn, acc, log):
     try:
@@ -575,14 +650,10 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
 
                 report_ok = False
                 for intento in range(1, 4):
-                    try:
-                        _default_log(f"[SEAAP] [{acc.get('name')}] Cargando reportes… intento {intento}/3")
-                        page.goto(SEAAP_REPORT_URL, wait_until="domcontentloaded", timeout=180_000)
-                    except Exception:
-                        try:
-                            page.goto(SEAAP_REPORT_URL, wait_until="networkidle", timeout=180_000)
-                        except Exception as e_goto:
-                            _default_log(f"[SEAAP] [{acc.get('name')}] Falló goto reportes: {e_goto}")
+                    _default_log(f"[SEAAP] [{acc.get('name')}] Cargando reportes… intento {intento}/3")
+                    if not _seaap_open_detalle_nino(page, _default_log):
+                        _default_log(f"[SEAAP] [{acc.get('name')}] Falló abrir reportes por menú.")
+                        continue
 
                     try:
                         page.wait_for_timeout(600)
