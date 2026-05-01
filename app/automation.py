@@ -244,8 +244,18 @@ class AutomationWorker(threading.Thread):
             self.log("[AUTOMATIZACIÓN] No hay cuentas configuradas. Abortando.")
             return
         if self.target_ubigeo:
-            accounts = [a for a in accounts if str(a.get("name")).strip() == str(self.target_ubigeo)]
-            self.log(f"[CONFIG] Filtrado por ubigeo={self.target_ubigeo}: {len(accounts)} cuenta(s).")
+            target = str(self.target_ubigeo).strip()
+            accounts = [
+                a for a in accounts
+                if (str(a.get("ubigeo") or "").strip() == target) or (str(a.get("name") or "").strip() == target)
+            ]
+            self.log(f"[CONFIG] Filtrado por ubigeo={target}: {len(accounts)} cuenta(s).")
+            if len(accounts) == 0:
+                self.log(f"[AUTOMATIZACIÓN][ERROR] No se encontró cuenta para ubigeo={target}. Abortando para evitar usar otra cuenta.")
+                return
+            if len(accounts) > 1:
+                self.log(f"[AUTOMATIZACIÓN][ERROR] Hay {len(accounts)} cuentas que coinciden con ubigeo={target}. Debe quedar única. Abortando.")
+                return
 
         conn = create_db_connection(self.db_config, self.log)
         if not conn:
