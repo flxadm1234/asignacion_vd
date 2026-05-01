@@ -15,18 +15,56 @@ from automation import load_accounts_from_json
 BASE_DIR = Path(__file__).resolve().parent
 PROJ2_DIR = BASE_DIR / "proyecto 2"
 
-SEAAP_REPORT_URL = "https://visitasdomiciliarias.minsa.gob.pe/odoo/action-339/172"
+SEAAP_REPORT_URL = "https://visitasdomiciliarias.minsa.gob.pe/odoo/action-339/228"
+SEAAP_LOGOUT_URL = "https://visitasdomiciliarias.minsa.gob.pe/web/session/logout"
 WHADOX_LOGIN_URL = "https://sinanemia.site/login1.php"
 WHADOX_MANT_URL = "https://sinanemia.site/appc/#/Mantenimiento"
 
 def _sanitize_url(u: str) -> str:
     return (u or "").strip().strip('"').strip("'").replace("`", "").strip()
 
+def _seaap_logout(page, log):
+    try:
+        page.goto(_sanitize_url(SEAAP_LOGOUT_URL), wait_until="domcontentloaded", timeout=60_000)
+        try:
+            page.wait_for_timeout(800)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    try:
+        btn_user = page.locator(
+            "button.o-dropdown.dropdown-toggle:has(img.o_user_avatar), "
+            "button.o-dropdown.dropdown-toggle:has(.oe_topbar_name), "
+            "button.o-dropdown.dropdown-toggle"
+        )
+        if btn_user.count():
+            btn_user.first.click(force=True)
+            try:
+                page.wait_for_timeout(300)
+            except Exception:
+                pass
+            link = page.locator("a[data-menu='logout'], a[href*='/web/session/logout']")
+            if link.count():
+                link.first.click(force=True)
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=30_000)
+                except Exception:
+                    pass
+                return True
+    except Exception:
+        pass
+
+    try:
+        page.goto(_sanitize_url(SEAAP_LOGOUT_URL), wait_until="domcontentloaded", timeout=60_000)
+        return True
+    except Exception:
+        return False
+
 def _seaap_login_if_needed(page, user: str, pwd: str, log):
     def _login_container():
-        form = page.locator(
-            "form:has(input[type='password']), form:has(input[name='password']), form:has(#password)"
-        )
+        form = page.locator("form.oe_login_form, form[action='/web/login'], form:has(#login):has(#password)")
         if form.count():
             return form.first
         return page
@@ -37,12 +75,17 @@ def _seaap_login_if_needed(page, user: str, pwd: str, log):
 
     def _user_locator(container=None):
         c = container or page
-        return c.locator("input[name='login'], #login, input[type='email']")
+        return c.locator("input[name='login'], #login")
 
     def has_login_form() -> bool:
         try:
             cont = _login_container()
-            return _pwd_locator(cont).count() > 0 and _user_locator(cont).count() > 0
+            if _pwd_locator(cont).count() == 0 or _user_locator(cont).count() == 0:
+                return False
+            try:
+                return _pwd_locator(cont).first.is_visible()
+            except Exception:
+                return True
         except Exception:
             return False
 
@@ -97,17 +140,20 @@ def _seaap_login_if_needed(page, user: str, pwd: str, log):
             pass
 
         try:
-            page.wait_for_selector(
-                "input[name='password'], #password, input[type='password']",
-                state="detached",
-                timeout=20_000,
-            )
+            page.wait_for_url("**/odoo**", timeout=30_000)
         except Exception:
             pass
 
         try:
             if page.locator(".o_main_navbar, nav.o_main_navbar").count():
                 log("[SEAAP] Login exitoso (navbar detectada).")
+                return True
+        except Exception:
+            pass
+
+        try:
+            if not has_login_form():
+                log("[SEAAP] Login exitoso (formulario ya no visible).")
                 return True
         except Exception:
             pass
@@ -201,9 +247,11 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
             pass
         for acc in accounts:
             try:
-                _default_log(f"[SEAAP] [{acc.get('name')}] Abriendo reportes…")
                 user = acc.get("seaap_user") or ""
                 pwd = acc.get("seaap_password") or ""
+
+                _default_log(f"[SEAAP] [{acc.get('name')}] Cerrando sesión previa…")
+                _seaap_logout(page, _default_log)
 
                 report_ok = False
                 for intento in range(1, 4):
@@ -246,7 +294,10 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                         pass
 
                 if not report_ok:
-                    _default_log(f"[SEAAP] [{acc.get('name')}] No se pudo acceder a Reportes tras reintentos. Saltando cuenta.")
+                    try:
+                        _default_log(f"[SEAAP] [{acc.get('name')}] No se pudo acceder a Reportes tras reintentos. URL={page.url}. Saltando cuenta.")
+                    except Exception:
+                        _default_log(f"[SEAAP] [{acc.get('name')}] No se pudo acceder a Reportes tras reintentos. Saltando cuenta.")
                     continue
 
                 page.wait_for_timeout(400)
