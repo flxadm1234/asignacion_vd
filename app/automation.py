@@ -46,7 +46,11 @@ def load_accounts_from_json(path: str, log):
             if not isinstance(a, dict):
                 continue
             ubigeo = str(a.get("ubigeo") or a.get("name") or a.get("codigo") or a.get("id") or "").strip()
-            name = str(a.get("name") or ubigeo or (a.get("seaap_user") or "")).strip()
+            name_raw = str(a.get("name") or "").strip()
+            if ubigeo and ubigeo.isdigit() and len(ubigeo) == 6:
+                name = ubigeo
+            else:
+                name = str(name_raw or ubigeo or (a.get("seaap_user") or "")).strip()
 
             seaap_user = (
                 a.get("seaap_user")

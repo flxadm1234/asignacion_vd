@@ -445,14 +445,16 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                 browser = p.chromium.launch(headless=True, args=browser_args)
             else:
                 raise
-        ctx = browser.new_context(accept_downloads=True, viewport={"width": 1440, "height": 900})
-        page = ctx.new_page()
-        try:
-            page.bring_to_front()
-        except Exception:
-            pass
         for acc in accounts:
+            ctx = None
+            page = None
             try:
+                ctx = browser.new_context(accept_downloads=True, viewport={"width": 1440, "height": 900})
+                page = ctx.new_page()
+                try:
+                    page.bring_to_front()
+                except Exception:
+                    pass
                 user = acc.get("seaap_user") or ""
                 pwd = acc.get("seaap_password") or ""
                 _default_log(f"[SEAAP] [{acc.get('name')}] Usando usuario SEAAP: {user}")
@@ -752,8 +754,16 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                     _default_log(f"[WHADOX] [{acc.get('name')}] Botón SUBIR no encontrado.")
             except Exception as e:
                 _default_log(f"[PIPELINE][ERROR] Cuenta {acc.get('name')}: {e}")
-        ctx.close()
-        browser.close()
+            finally:
+                try:
+                    if ctx:
+                        ctx.close()
+                except Exception:
+                    pass
+        try:
+            browser.close()
+        except Exception:
+            pass
 
 
 def _read_db_config_from_env():
