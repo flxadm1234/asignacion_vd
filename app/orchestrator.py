@@ -18,7 +18,7 @@ PROJ2_DIR = BASE_DIR / "proyecto 2"
 SEAAP_REPORT_URL = "https://visitasdomiciliarias.minsa.gob.pe/odoo/action-339/228"
 SEAAP_LOGOUT_URL = "https://visitasdomiciliarias.minsa.gob.pe/web/session/logout"
 SEAAP_BASE_URL = "https://visitasdomiciliarias.minsa.gob.pe/"
-SEAAP_LOGIN_URL = "https://visitasdomiciliarias.minsa.gob.pe/web/login"
+SEAAP_LOGIN_URL = "https://visitasdomiciliarias.minsa.gob.pe/es_419/web/login"
 WHADOX_LOGIN_URL = "https://sinanemia.site/login1.php"
 WHADOX_MANT_URL = "https://sinanemia.site/appc/#/Mantenimiento"
 
@@ -51,6 +51,19 @@ def _abs_url(base_url: str, maybe_url: str) -> str:
         return urljoin(base_url, maybe_url)
     except Exception:
         return maybe_url
+
+def _seaap_session_info(page):
+    try:
+        url = _abs_url(SEAAP_BASE_URL, "/web/session/get_session_info")
+        r = page.request.get(url, timeout=60_000)
+        if r.status != 200:
+            return None
+        try:
+            return r.json()
+        except Exception:
+            return None
+    except Exception:
+        return None
 
 def _seaap_download_excel(page, export_btn, acc, log):
     try:
@@ -325,6 +338,9 @@ def _seaap_login(page, user: str, pwd: str, log):
 
             try:
                 if page.locator(".o_main_navbar, nav.o_main_navbar").count():
+                    info = _seaap_session_info(page)
+                    if isinstance(info, dict):
+                        log(f"[SEAAP] Sesión: uid={info.get('uid')} username={info.get('username')} db={info.get('db')}")
                     log("[SEAAP] Login OK (navbar detectada).")
                     return True
             except Exception:
@@ -332,6 +348,9 @@ def _seaap_login(page, user: str, pwd: str, log):
 
             try:
                 if page.locator("form.oe_login_form").count() == 0:
+                    info = _seaap_session_info(page)
+                    if isinstance(info, dict):
+                        log(f"[SEAAP] Sesión: uid={info.get('uid')} username={info.get('username')} db={info.get('db')}")
                     log("[SEAAP] Login OK (formulario no presente).")
                     return True
             except Exception:
@@ -806,12 +825,29 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                                     timeout=600000,
                                 )
                                 try:
+                                    _default_log(f"[WHADOX] [{acc.get('name')}] Reintento POST status={r3.status}")
+                                except Exception:
+                                    pass
+                                try:
+                                    ct3 = (r3.headers or {}).get("content-type") or (r3.headers or {}).get("Content-Type")
+                                    if ct3:
+                                        _default_log(f"[WHADOX] [{acc.get('name')}] Reintento POST content-type={ct3}")
+                                except Exception:
+                                    pass
+                                try:
                                     j3 = r3.json()
                                 except Exception:
                                     j3 = None
                                 if isinstance(j3, dict):
                                     _default_log(f"[WHADOX] [{acc.get('name')}] Reintento POST por filas=0 ok={j3.get('ok')} rows={j3.get('rows')} message={j3.get('message')}")
                                     rows_cnt = j3.get("rows", rows_cnt)
+                                else:
+                                    try:
+                                        t3 = r3.text()
+                                    except Exception:
+                                        t3 = ""
+                                    if t3:
+                                        _default_log(f"[WHADOX] [{acc.get('name')}] Reintento POST body: {t3[:300]}")
                             except Exception as epost0:
                                 _default_log(f"[WHADOX] [{acc.get('name')}] Reintento POST por filas=0 falló: {epost0}")
                         if rows_cnt is None and txt:
@@ -829,7 +865,10 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                                 rows_cnt = int(m2.group(1))
                             if page.locator(".swal2-confirm").count():
                                 page.locator(".swal2-confirm").first.click()
-                            _default_log(f"[WHADOX] [{acc.get('name')}] Carga confirmada. Filas={rows_cnt if rows_cnt is not None else 'N/D'}")
+                            if rows_cnt == 0 or rows_cnt == "0":
+                                _default_log(f"[WHADOX] [{acc.get('name')}] Carga terminó con 0 filas. Revisar credenciales/archivo/etapa/ubigeo. Filas={rows_cnt}")
+                            else:
+                                _default_log(f"[WHADOX] [{acc.get('name')}] Carga confirmada. Filas={rows_cnt if rows_cnt is not None else 'N/D'}")
                         except Exception:
                             _default_log(f"[WHADOX] [{acc.get('name')}] Sin modal de confirmación. Filas={rows_cnt if rows_cnt is not None else 'N/D'}")
                     except PWTimeout:
