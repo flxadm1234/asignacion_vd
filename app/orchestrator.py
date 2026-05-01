@@ -22,6 +22,63 @@ WHADOX_MANT_URL = "https://sinanemia.site/appc/#/Mantenimiento"
 def _sanitize_url(u: str) -> str:
     return (u or "").strip().strip('"').strip("'").replace("`", "").strip()
 
+def _seaap_login_if_needed(page, user: str, pwd: str, log):
+    def has_login_form() -> bool:
+        try:
+            return page.locator("input[type='password'], #password, input[name='password']").count() > 0
+        except Exception:
+            return False
+
+    if not has_login_form():
+        return True
+
+    for intento in range(1, 4):
+        log(f"[SEAAP] Login requerido. Intento {intento}/3…")
+        try:
+            page.locator("#login, input[name='login'], input[type='text']").first.fill(user)
+        except Exception:
+            try:
+                page.locator("input[name='login'], input[type='text']").first.fill(user)
+            except Exception:
+                pass
+        try:
+            page.locator("#password, input[name='password'], input[type='password']").first.fill(pwd)
+        except Exception:
+            pass
+
+        btn = page.locator(
+            "button:has-text('Ingresar'), button:has-text('Iniciar sesión'), button[type='submit'], input[type='submit']"
+        )
+        if btn.count():
+            try:
+                btn.first.click()
+            except Exception:
+                try:
+                    btn.first.click(force=True)
+                except Exception:
+                    pass
+
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=60_000)
+        except Exception:
+            pass
+        try:
+            page.wait_for_timeout(800)
+        except Exception:
+            pass
+
+        if not has_login_form():
+            log("[SEAAP] Login exitoso (formulario ya no presente).")
+            return True
+
+        try:
+            page.wait_for_timeout(1200)
+        except Exception:
+            pass
+
+    log("[SEAAP][ERROR] No se pudo completar login (formulario sigue presente).")
+    return False
+
 def _load_module_from_path(name: str, path: Path):
     spec = importlib.util.spec_from_file_location(name, str(path))
     mod = importlib.util.module_from_spec(spec)
@@ -100,25 +157,54 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
         for acc in accounts:
             try:
                 _default_log(f"[SEAAP] [{acc.get('name')}] Abriendo reportes…")
-                page.goto(SEAAP_REPORT_URL, wait_until="domcontentloaded", timeout=180_000)
-                # Login si aparece
-                if page.locator("input[type=password]").count():
-                    user = acc.get("seaap_user") or ""
-                    pwd = acc.get("seaap_password") or ""
-                    page.locator("#login, input[name='login'], input[type='text']").first.fill(user)
-                    page.locator("#password, input[name='password'], input[type='password']").first.fill(pwd)
-                    btn = page.locator(
-                        "button:has-text('Ingresar'), button:has-text('Iniciar sesión'), button[type='submit'], input[type='submit']"
-                    )
-                    if btn.count():
-                        btn.first.click()
-                        page.wait_for_timeout(2500)
+                user = acc.get("seaap_user") or ""
+                pwd = acc.get("seaap_password") or ""
 
-                try:
-                    page.goto(SEAAP_REPORT_URL, wait_until="domcontentloaded", timeout=180_000)
-                except Exception:
-                    pass
-                page.wait_for_timeout(1200)
+                report_ok = False
+                for intento in range(1, 4):
+                    try:
+                        _default_log(f"[SEAAP] [{acc.get('name')}] Cargando reportes… intento {intento}/3")
+                        page.goto(SEAAP_REPORT_URL, wait_until="domcontentloaded", timeout=180_000)
+                    except Exception:
+                        try:
+                            page.goto(SEAAP_REPORT_URL, wait_until="networkidle", timeout=180_000)
+                        except Exception as e_goto:
+                            _default_log(f"[SEAAP] [{acc.get('name')}] Falló goto reportes: {e_goto}")
+
+                    if not _seaap_login_if_needed(page, user, pwd, _default_log):
+                        continue
+
+                    try:
+                        page.goto(SEAAP_REPORT_URL, wait_until="domcontentloaded", timeout=180_000)
+                    except Exception:
+                        pass
+
+                    try:
+                        page.wait_for_timeout(600)
+                    except Exception:
+                        pass
+
+                    export_btn = page.locator(
+                        "button[name='do_report_2']:has-text('Generar Excel'), "
+                        "button.btn.btn-primary[name='do_report_2'], "
+                        "button:has-text('Generar Excel')"
+                    ).first
+                    month_sel = page.locator("select#month_0, div[name='month'] select.o_input, div[name='month'] select").first
+                    if export_btn.count() or month_sel.count():
+                        report_ok = True
+                        break
+
+                    _default_log(f"[SEAAP] [{acc.get('name')}] Reportes no listos (no aparece botón/mes). Reintentando…")
+                    try:
+                        page.wait_for_timeout(1500)
+                    except Exception:
+                        pass
+
+                if not report_ok:
+                    _default_log(f"[SEAAP] [{acc.get('name')}] No se pudo acceder a Reportes tras reintentos. Saltando cuenta.")
+                    continue
+
+                page.wait_for_timeout(400)
 
                 if month_label:
                     month_sel = page.locator("select#month_0, div[name='month'] select.o_input, div[name='month'] select").first
@@ -152,9 +238,16 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                             except Exception:
                                 pass
 
-                export_btn = page.locator("button[name='do_report_2']:has-text('Generar Excel'), button.btn.btn-primary[name='do_report_2'], button:has-text('Generar Excel')").first
+                export_btn = page.locator(
+                    "button[name='do_report_2']:has-text('Generar Excel'), "
+                    "button.btn.btn-primary[name='do_report_2'], "
+                    "button:has-text('Generar Excel')"
+                ).first
                 if export_btn.count() == 0:
-                    _default_log(f"[SEAAP] [{acc.get('name')}] No se encontró botón 'Generar Excel'.")
+                    try:
+                        _default_log(f"[SEAAP] [{acc.get('name')}] No se encontró botón 'Generar Excel'. URL={page.url}")
+                    except Exception:
+                        _default_log(f"[SEAAP] [{acc.get('name')}] No se encontró botón 'Generar Excel'.")
                     continue
                 _default_log(f"[SEAAP] [{acc.get('name')}] Descargando Excel…")
                 with page.expect_download(timeout=180_000) as dl_info:
