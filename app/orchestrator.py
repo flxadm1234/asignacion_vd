@@ -43,6 +43,13 @@ def _guess_filename_from_headers(headers: dict) -> str | None:
     except Exception:
         return None
 
+def _abs_url(base_url: str, maybe_url: str) -> str:
+    try:
+        from urllib.parse import urljoin
+        return urljoin(base_url, maybe_url)
+    except Exception:
+        return maybe_url
+
 def _seaap_download_excel(page, export_btn, acc, log):
     try:
         export_btn.scroll_into_view_if_needed()
@@ -55,66 +62,163 @@ def _seaap_download_excel(page, export_btn, acc, log):
 
     last_err = None
     for intento in range(1, 4):
+        log(f"[SEAAP] [{acc.get('name')}] Descargando Excel… intento {intento}/3")
         try:
-            log(f"[SEAAP] [{acc.get('name')}] Descargando Excel… intento {intento}/3")
-            with page.expect_download(timeout=180_000) as dl_info:
+            try:
+                export_btn.wait_for(state="visible", timeout=30_000)
+            except Exception:
+                pass
+            try:
+                export_btn.wait_for(state="attached", timeout=30_000)
+            except Exception:
+                pass
+
+            for _ in range(40):
+                try:
+                    if export_btn.is_enabled():
+                        break
+                except Exception:
+                    break
+                try:
+                    page.wait_for_timeout(500)
+                except Exception:
+                    break
+
+            got = {"download": None, "bin_resp": None, "redir": None, "action_url": None}
+
+            def _on_download(dl):
+                if got["download"] is None:
+                    got["download"] = dl
+
+            def _on_response(resp):
+                try:
+                    url = resp.url or ""
+                except Exception:
+                    url = ""
+
+                try:
+                    if got["action_url"] is None and "/web/dataset/" in url:
+                        try:
+                            js = resp.json()
+                        except Exception:
+                            js = None
+                        if isinstance(js, dict):
+                            res = js.get("result")
+                            if isinstance(res, dict):
+                                u = res.get("url") or res.get("download_url")
+                                if isinstance(u, str) and u.strip():
+                                    got["action_url"] = u.strip()
+                except Exception:
+                    pass
+
+                try:
+                    if got["bin_resp"] is None and any(k in url for k in ("/web/content", "/report", "download")):
+                        if resp.status in (200, 206):
+                            try:
+                                h = resp.headers or {}
+                            except Exception:
+                                h = {}
+                            ct = (h.get("content-type") or h.get("Content-Type") or "").lower()
+                            cd = (h.get("content-disposition") or h.get("Content-Disposition") or "").lower()
+                            ok_ct = (
+                                ("excel" in ct)
+                                or ("spreadsheet" in ct)
+                                or ("application" in ct and "json" not in ct and "html" not in ct)
+                            )
+                            ok_cd = "attachment" in cd or "filename" in cd
+                            if ok_ct or ok_cd:
+                                got["bin_resp"] = resp
+                        elif resp.status in (301, 302, 303, 307, 308) and got["redir"] is None:
+                            try:
+                                h = resp.headers or {}
+                            except Exception:
+                                h = {}
+                            loc = h.get("location") or h.get("Location")
+                            if isinstance(loc, str) and loc.strip():
+                                got["redir"] = loc.strip()
+                except Exception:
+                    pass
+
+            page.on("download", _on_download)
+            page.on("response", _on_response)
+            try:
                 try:
                     export_btn.click()
                 except Exception:
                     export_btn.click(force=True)
-            dl = dl_info.value
-            suggested = dl.suggested_filename or "reporte.xls"
+
+                for _ in range(360):
+                    if got["download"] is not None or got["bin_resp"] is not None or got["redir"] is not None or got["action_url"] is not None:
+                        break
+                    page.wait_for_timeout(500)
+            finally:
+                try:
+                    page.off("download", _on_download)
+                except Exception:
+                    pass
+                try:
+                    page.off("response", _on_response)
+                except Exception:
+                    pass
+
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            final_path = DATA_DIR / f"seaap_{acc.get('seaap_user')}_{stamp}_{suggested}"
-            dl.save_as(str(final_path))
-            log(f"[SEAAP] [{acc.get('name')}] Archivo guardado: {final_path}")
-            return final_path
+            if got["download"] is not None:
+                dl = got["download"]
+                suggested = dl.suggested_filename or "reporte.xls"
+                final_path = DATA_DIR / f"seaap_{acc.get('seaap_user')}_{stamp}_{suggested}"
+                dl.save_as(str(final_path))
+                log(f"[SEAAP] [{acc.get('name')}] Archivo guardado: {final_path}")
+                return final_path
+
+            if got["bin_resp"] is not None:
+                resp = got["bin_resp"]
+                try:
+                    headers = resp.headers or {}
+                except Exception:
+                    headers = {}
+                fname = _guess_filename_from_headers(headers) or "reporte.xls"
+                final_path = DATA_DIR / f"seaap_{acc.get('seaap_user')}_{stamp}_{fname}"
+                body = resp.body()
+                final_path.write_bytes(body)
+                log(f"[SEAAP] [{acc.get('name')}] Archivo guardado (por response): {final_path}")
+                return final_path
+
+            if got["redir"] is not None:
+                url = _abs_url(page.url, got["redir"])
+                r = page.request.get(url, timeout=180_000)
+                headers = {}
+                try:
+                    headers = r.headers or {}
+                except Exception:
+                    headers = {}
+                fname = _guess_filename_from_headers(headers) or "reporte.xls"
+                final_path = DATA_DIR / f"seaap_{acc.get('seaap_user')}_{stamp}_{fname}"
+                final_path.write_bytes(r.body())
+                log(f"[SEAAP] [{acc.get('name')}] Archivo guardado (por redirect): {final_path}")
+                return final_path
+
+            if got["action_url"] is not None:
+                url = _abs_url(page.url, got["action_url"])
+                r = page.request.get(url, timeout=180_000)
+                headers = {}
+                try:
+                    headers = r.headers or {}
+                except Exception:
+                    headers = {}
+                fname = _guess_filename_from_headers(headers) or "reporte.xls"
+                final_path = DATA_DIR / f"seaap_{acc.get('seaap_user')}_{stamp}_{fname}"
+                final_path.write_bytes(r.body())
+                log(f"[SEAAP] [{acc.get('name')}] Archivo guardado (por action_url): {final_path}")
+                return final_path
+
+            raise RuntimeError("No se detectó ni evento de descarga ni response/redirect/action_url.")
         except Exception as e:
             last_err = e
-            log(f"[SEAAP] [{acc.get('name')}] No se detectó descarga por evento (intento {intento}): {e}")
-
-        try:
-            with page.expect_response(
-                lambda r: (
-                    r.status == 200
-                    and (
-                        "/web/content" in r.url
-                        or "/report" in r.url
-                        or "download" in r.url
-                    )
-                    and (
-                        "application" in (r.headers.get("content-type") or "").lower()
-                        or "application" in (r.headers.get("Content-Type") or "").lower()
-                        or "attachment" in (r.headers.get("content-disposition") or "").lower()
-                    )
-                ),
-                timeout=180_000,
-            ) as resp_info:
-                try:
-                    export_btn.click()
-                except Exception:
-                    export_btn.click(force=True)
-            resp = resp_info.value
-            headers = {}
+            log(f"[SEAAP] [{acc.get('name')}] Falló descarga (intento {intento}): {e}")
             try:
-                headers = resp.headers
+                page.wait_for_timeout(1200)
             except Exception:
-                headers = {}
-            fname = _guess_filename_from_headers(headers) or "reporte.xls"
-            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            final_path = DATA_DIR / f"seaap_{acc.get('seaap_user')}_{stamp}_{fname}"
-            body = resp.body()
-            final_path.write_bytes(body)
-            log(f"[SEAAP] [{acc.get('name')}] Archivo guardado (por response): {final_path}")
-            return final_path
-        except Exception as e2:
-            last_err = e2
-            log(f"[SEAAP] [{acc.get('name')}] No se pudo capturar response de descarga (intento {intento}): {e2}")
-
-        try:
-            page.wait_for_timeout(1200)
-        except Exception:
-            pass
+                pass
 
     raise RuntimeError(f"No se pudo descargar el Excel. Error final: {last_err}")
 
