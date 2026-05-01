@@ -23,6 +23,101 @@ WHADOX_MANT_URL = "https://sinanemia.site/appc/#/Mantenimiento"
 def _sanitize_url(u: str) -> str:
     return (u or "").strip().strip('"').strip("'").replace("`", "").strip()
 
+def _guess_filename_from_headers(headers: dict) -> str | None:
+    try:
+        cd = (headers or {}).get("content-disposition") or (headers or {}).get("Content-Disposition") or ""
+        if not cd:
+            return None
+        import re
+        m = re.search(r"filename\\*=UTF-8''([^;]+)", cd, flags=re.IGNORECASE)
+        if m:
+            from urllib.parse import unquote
+            return unquote(m.group(1)).strip().strip('"').strip("'")
+        m2 = re.search(r'filename=\"([^\"]+)\"', cd, flags=re.IGNORECASE)
+        if m2:
+            return m2.group(1).strip()
+        m3 = re.search(r"filename=([^;]+)", cd, flags=re.IGNORECASE)
+        if m3:
+            return m3.group(1).strip().strip('"').strip("'")
+        return None
+    except Exception:
+        return None
+
+def _seaap_download_excel(page, export_btn, acc, log):
+    try:
+        export_btn.scroll_into_view_if_needed()
+    except Exception:
+        pass
+    try:
+        export_btn.wait_for(state="visible", timeout=30_000)
+    except Exception:
+        pass
+
+    last_err = None
+    for intento in range(1, 4):
+        try:
+            log(f"[SEAAP] [{acc.get('name')}] Descargando Excel… intento {intento}/3")
+            with page.expect_download(timeout=180_000) as dl_info:
+                try:
+                    export_btn.click()
+                except Exception:
+                    export_btn.click(force=True)
+            dl = dl_info.value
+            suggested = dl.suggested_filename or "reporte.xls"
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            final_path = DATA_DIR / f"seaap_{acc.get('seaap_user')}_{stamp}_{suggested}"
+            dl.save_as(str(final_path))
+            log(f"[SEAAP] [{acc.get('name')}] Archivo guardado: {final_path}")
+            return final_path
+        except Exception as e:
+            last_err = e
+            log(f"[SEAAP] [{acc.get('name')}] No se detectó descarga por evento (intento {intento}): {e}")
+
+        try:
+            with page.expect_response(
+                lambda r: (
+                    r.status == 200
+                    and (
+                        "/web/content" in r.url
+                        or "/report" in r.url
+                        or "download" in r.url
+                    )
+                    and (
+                        "application" in (r.headers.get("content-type") or "").lower()
+                        or "application" in (r.headers.get("Content-Type") or "").lower()
+                        or "attachment" in (r.headers.get("content-disposition") or "").lower()
+                    )
+                ),
+                timeout=180_000,
+            ) as resp_info:
+                try:
+                    export_btn.click()
+                except Exception:
+                    export_btn.click(force=True)
+            resp = resp_info.value
+            headers = {}
+            try:
+                headers = resp.headers
+            except Exception:
+                headers = {}
+            fname = _guess_filename_from_headers(headers) or "reporte.xls"
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            final_path = DATA_DIR / f"seaap_{acc.get('seaap_user')}_{stamp}_{fname}"
+            body = resp.body()
+            final_path.write_bytes(body)
+            log(f"[SEAAP] [{acc.get('name')}] Archivo guardado (por response): {final_path}")
+            return final_path
+        except Exception as e2:
+            last_err = e2
+            log(f"[SEAAP] [{acc.get('name')}] No se pudo capturar response de descarga (intento {intento}): {e2}")
+
+        try:
+            page.wait_for_timeout(1200)
+        except Exception:
+            pass
+
+    raise RuntimeError(f"No se pudo descargar el Excel. Error final: {last_err}")
+
 def _seaap_logout(page, log):
     try:
         page.goto(_sanitize_url(SEAAP_LOGOUT_URL), wait_until="domcontentloaded", timeout=60_000)
@@ -345,15 +440,7 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                     except Exception:
                         _default_log(f"[SEAAP] [{acc.get('name')}] No se encontró botón 'Generar Excel'.")
                     continue
-                _default_log(f"[SEAAP] [{acc.get('name')}] Descargando Excel…")
-                with page.expect_download(timeout=180_000) as dl_info:
-                    export_btn.click()
-                dl = dl_info.value
-                suggested = dl.suggested_filename or "reporte.xls"
-                stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                final_path = DATA_DIR / f"seaap_{acc.get('seaap_user')}_{stamp}_{suggested}"
-                dl.save_as(str(final_path))
-                _default_log(f"[SEAAP] [{acc.get('name')}] Archivo guardado: {final_path}")
+                final_path = _seaap_download_excel(page, export_btn, acc, _default_log)
                 # Subir a Whadox
                 _default_log(f"[WHADOX] [{acc.get('name')}] Ingresando…")
                 page.goto(_sanitize_url(WHADOX_LOGIN_URL), wait_until="domcontentloaded", timeout=120_000)
