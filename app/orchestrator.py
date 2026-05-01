@@ -23,9 +23,26 @@ def _sanitize_url(u: str) -> str:
     return (u or "").strip().strip('"').strip("'").replace("`", "").strip()
 
 def _seaap_login_if_needed(page, user: str, pwd: str, log):
+    def _login_container():
+        form = page.locator(
+            "form:has(input[type='password']), form:has(input[name='password']), form:has(#password)"
+        )
+        if form.count():
+            return form.first
+        return page
+
+    def _pwd_locator(container=None):
+        c = container or page
+        return c.locator("input[name='password'], #password, input[type='password']")
+
+    def _user_locator(container=None):
+        c = container or page
+        return c.locator("input[name='login'], #login, input[type='email']")
+
     def has_login_form() -> bool:
         try:
-            return page.locator("input[type='password'], #password, input[name='password']").count() > 0
+            cont = _login_container()
+            return _pwd_locator(cont).count() > 0 and _user_locator(cont).count() > 0
         except Exception:
             return False
 
@@ -34,21 +51,37 @@ def _seaap_login_if_needed(page, user: str, pwd: str, log):
 
     for intento in range(1, 4):
         log(f"[SEAAP] Login requerido. Intento {intento}/3…")
-        try:
-            page.locator("#login, input[name='login'], input[type='text']").first.fill(user)
-        except Exception:
+        cont = _login_container()
+
+        user_inp = _user_locator(cont)
+        pwd_inp = _pwd_locator(cont)
+        if user_inp.count() == 0 or pwd_inp.count() == 0:
+            log("[SEAAP][WARN] Formulario login no está completo (faltan inputs). Reintentando…")
             try:
-                page.locator("input[name='login'], input[type='text']").first.fill(user)
+                page.wait_for_timeout(800)
             except Exception:
                 pass
+            continue
+
         try:
-            page.locator("#password, input[name='password'], input[type='password']").first.fill(pwd)
+            user_inp.first.click(force=True)
+            user_inp.first.fill(user)
+        except Exception:
+            pass
+        try:
+            pwd_inp.first.click(force=True)
+            pwd_inp.first.fill(pwd)
         except Exception:
             pass
 
-        btn = page.locator(
+        btn = cont.locator(
             "button:has-text('Ingresar'), button:has-text('Iniciar sesión'), button[type='submit'], input[type='submit']"
         )
+        if btn.count() == 0:
+            btn = page.locator(
+                "button:has-text('Ingresar'), button:has-text('Iniciar sesión'), button[type='submit'], input[type='submit']"
+            )
+
         if btn.count():
             try:
                 btn.first.click()
@@ -62,8 +95,20 @@ def _seaap_login_if_needed(page, user: str, pwd: str, log):
             page.wait_for_load_state("domcontentloaded", timeout=60_000)
         except Exception:
             pass
+
         try:
-            page.wait_for_timeout(800)
+            page.wait_for_selector(
+                "input[name='password'], #password, input[type='password']",
+                state="detached",
+                timeout=20_000,
+            )
+        except Exception:
+            pass
+
+        try:
+            if page.locator(".o_main_navbar, nav.o_main_navbar").count():
+                log("[SEAAP] Login exitoso (navbar detectada).")
+                return True
         except Exception:
             pass
 
