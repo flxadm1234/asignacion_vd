@@ -19,6 +19,9 @@ SEAAP_REPORT_URL = "https://visitasdomiciliarias.minsa.gob.pe/odoo/action-339/17
 WHADOX_LOGIN_URL = "https://sinanemia.site/login1.php"
 WHADOX_MANT_URL = "https://sinanemia.site/appc/#/Mantenimiento"
 
+def _sanitize_url(u: str) -> str:
+    return (u or "").strip().strip('"').strip("'").replace("`", "").strip()
+
 def _load_module_from_path(name: str, path: Path):
     spec = importlib.util.spec_from_file_location(name, str(path))
     mod = importlib.util.module_from_spec(spec)
@@ -164,7 +167,7 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                 _default_log(f"[SEAAP] [{acc.get('name')}] Archivo guardado: {final_path}")
                 # Subir a Whadox
                 _default_log(f"[WHADOX] [{acc.get('name')}] Ingresando…")
-                page.goto(WHADOX_LOGIN_URL, wait_until="domcontentloaded", timeout=120_000)
+                page.goto(_sanitize_url(WHADOX_LOGIN_URL), wait_until="domcontentloaded", timeout=120_000)
                 page.fill("#dni", str(acc.get("whadox_dni") or ""))
                 page.fill("#pass", str(acc.get("whadox_password") or ""))
                 btn_login = None
@@ -180,7 +183,7 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                 for intento in range(1, 7):
                     try:
                         _default_log(f"[WHADOX] [{acc.get('name')}] Cargando Mantenimiento… intento {intento}/6")
-                        page.goto(WHADOX_MANT_URL, wait_until="domcontentloaded", timeout=90_000)
+                        page.goto(_sanitize_url(WHADOX_MANT_URL), wait_until="domcontentloaded", timeout=90_000)
                     except Exception as e:
                         _default_log(f"[WHADOX] [{acc.get('name')}] goto abortado ({e}). Probando ruta base…")
                         try:
@@ -218,6 +221,13 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                     _default_log(f"[WHADOX] [{acc.get('name')}] Input file no encontrado tras espera.")
                     continue
                 file_input.set_input_files(str(final_path))
+                try:
+                    page.wait_for_function(
+                        "() => { const i=document.querySelector('#archivo5'); return i && i.files && i.files.length > 0; }",
+                        timeout=10_000,
+                    )
+                except Exception:
+                    pass
                 etapa_val = str(periodo_bd or "").strip()
                 try:
                     inp_etapa = cont.locator("#etapa3, input[name='etapa3'], input[type='date']")
@@ -225,6 +235,13 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                         if etapa_val:
                             inp_etapa.first.fill(etapa_val)
                             page.wait_for_timeout(300)
+                            try:
+                                page.evaluate(
+                                    "v => { const i=document.querySelector('#etapa3, input[name=\"etapa3\"], input[type=\"date\"]'); if(i){ i.value=v; i.dispatchEvent(new Event('input',{bubbles:true})); i.dispatchEvent(new Event('change',{bubbles:true})); } }",
+                                    etapa_val,
+                                )
+                            except Exception:
+                                pass
                 except Exception:
                     pass
                 subir_btn = cont.locator('button[onclick*="subirArchivos5"], button:has-text("SUBIR ARCHIVO"), button:has-text("Subir"), button.btn-success')
@@ -251,14 +268,15 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                         except Exception:
                             txt = ""
                         rows_cnt = None
+                        json_ok = None
                         try:
                             j = resp.json()
                             if isinstance(j, dict):
                                 rows_cnt = j.get("rows")
-                                _default_log(f"[WHADOX] [{acc.get('name')}] JSON ok={j.get('ok')} rows={j.get('rows')} message={j.get('message')}")
+                                json_ok = j.get("ok")
+                                _default_log(f"[WHADOX] [{acc.get('name')}] JSON ok={json_ok} rows={j.get('rows')} message={j.get('message')}")
                                 msg = str(j.get("message") or "")
-                                ok = j.get("ok")
-                                if (ok is False) and ("etapa" in msg.lower()):
+                                if (json_ok is False) and ("etapa" in msg.lower()):
                                     try:
                                         ubig2 = str(acc.get("name") or acc.get("ubigeo") or "").strip()
                                         etapa2 = etapa_val
@@ -281,6 +299,35 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                                         _default_log(f"[WHADOX] [{acc.get('name')}] Reintento POST falló: {epost}")
                         except Exception:
                             pass
+                        if json_ok is True and (rows_cnt == 0 or rows_cnt == "0"):
+                            try:
+                                ubig2 = str(acc.get("name") or acc.get("ubigeo") or "").strip()
+                                etapa2 = etapa_val
+                                mime = "application/vnd.ms-excel"
+                                try:
+                                    import mimetypes
+                                    mt = mimetypes.guess_type(str(final_path))[0]
+                                    if mt:
+                                        mime = mt
+                                except Exception:
+                                    pass
+                                with open(final_path, "rb") as fh:
+                                    form = {"archivo5": (Path(final_path).name, fh.read(), mime)}
+                                r3 = page.request.post(
+                                    "https://sinanemia.site/appc/archivos/cargardataseaap2.php",
+                                    params={"ubigeo": ubig2, "etapa": etapa2},
+                                    multipart=form,
+                                    timeout=600000,
+                                )
+                                try:
+                                    j3 = r3.json()
+                                except Exception:
+                                    j3 = None
+                                if isinstance(j3, dict):
+                                    _default_log(f"[WHADOX] [{acc.get('name')}] Reintento POST por filas=0 ok={j3.get('ok')} rows={j3.get('rows')} message={j3.get('message')}")
+                                    rows_cnt = j3.get("rows", rows_cnt)
+                            except Exception as epost0:
+                                _default_log(f"[WHADOX] [{acc.get('name')}] Reintento POST por filas=0 falló: {epost0}")
                         if rows_cnt is None and txt:
                             import re
                             m = re.search(r"Se han cargado\s+(\d+)\s+datos", txt, flags=re.IGNORECASE)
