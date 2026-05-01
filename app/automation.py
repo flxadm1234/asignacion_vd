@@ -27,6 +27,8 @@ def load_accounts_from_json(path: str, log):
         # 3) {"ubigeo1": {...}, "ubigeo2": {...}}
         if isinstance(data, dict) and "accounts" in data:
             raw_items = data.get("accounts", [])
+        elif isinstance(data, dict) and "cuentas" in data:
+            raw_items = data.get("cuentas", [])
         elif isinstance(data, list):
             raw_items = data
         elif isinstance(data, dict):
@@ -35,6 +37,7 @@ def load_accounts_from_json(path: str, log):
                 if isinstance(val, dict):
                     v = val.copy()
                     v.setdefault("name", key)
+                    v.setdefault("ubigeo", key)
                     raw_items.append(v)
         else:
             raw_items = []
@@ -42,19 +45,30 @@ def load_accounts_from_json(path: str, log):
         for a in raw_items:
             if not isinstance(a, dict):
                 continue
-            name = (
-                str(a.get("name"))
-                or str(a.get("ubigeo"))
-                or str(a.get("codigo"))
-                or str(a.get("id"))
-                or str(a.get("seaap_user") or "")
+            ubigeo = str(a.get("ubigeo") or a.get("name") or a.get("codigo") or a.get("id") or "").strip()
+            name = str(a.get("name") or ubigeo or (a.get("seaap_user") or "")).strip()
+
+            seaap_user = (
+                a.get("seaap_user")
+                or a.get("usuario")
+                or a.get("user")
+                or (a.get("seaap") or {}).get("user")
+                or (a.get("seaap") or {}).get("usuario")
             )
-            seaap_user = a.get("seaap_user") or (a.get("seaap") or {}).get("user") or (a.get("seaap") or {}).get("usuario")
-            seaap_password = a.get("seaap_password") or (a.get("seaap") or {}).get("password") or (a.get("seaap") or {}).get("clave")
+            seaap_password = (
+                a.get("seaap_password")
+                or a.get("contraseña")
+                or a.get("contrasena")
+                or a.get("password")
+                or a.get("clave")
+                or (a.get("seaap") or {}).get("password")
+                or (a.get("seaap") or {}).get("clave")
+            )
             whadox_dni = a.get("whadox_dni") or (a.get("whadox") or {}).get("dni") or (a.get("whadox") or {}).get("user")
             whadox_password = a.get("whadox_password") or (a.get("whadox") or {}).get("password") or (a.get("whadox") or {}).get("clave")
             item = {
                 "name": name or "",
+                "ubigeo": ubigeo or "",
                 "seaap_user": str(seaap_user or ""),
                 "seaap_password": str(seaap_password or ""),
                 "whadox_dni": str(whadox_dni or ""),

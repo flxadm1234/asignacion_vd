@@ -393,7 +393,14 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
         _default_log("[PIPELINE] accounts.json sin cuentas. Saltando pipeline SEAAP→Whadox.")
         return
     if ubigeo:
-        accounts = [a for a in accounts if str(a.get("name")) == str(ubigeo)]
+        target = str(ubigeo or "").strip()
+        accounts = [
+            a for a in accounts
+            if (str(a.get("ubigeo") or "").strip() == target) or (str(a.get("name") or "").strip() == target)
+        ]
+        if not accounts:
+            _default_log(f"[PIPELINE][ERROR] No se encontró cuenta para ubigeo={target}. Verifica accounts.json.")
+            return
     _default_log(f"[PIPELINE] Ejecutando SEAAP→Whadox para {len(accounts)} cuenta(s).")
 
     raw = (periodo_bd or "").strip()
@@ -448,6 +455,7 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
             try:
                 user = acc.get("seaap_user") or ""
                 pwd = acc.get("seaap_password") or ""
+                _default_log(f"[SEAAP] [{acc.get('name')}] Usando usuario SEAAP: {user}")
 
                 _default_log(f"[SEAAP] [{acc.get('name')}] Cerrando sesión previa…")
                 _seaap_logout(page, _default_log)
@@ -475,14 +483,26 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                         page.wait_for_timeout(600)
                     except Exception:
                         pass
+                    try:
+                        page.wait_for_selector(
+                            "button[name='do_report_2'], select#month_0, div[name='month'] select.o_input, div[name='month'] select",
+                            timeout=20_000,
+                        )
+                    except Exception:
+                        pass
 
                     export_btn = page.locator(
-                        "button[name='do_report_2']:has-text('Generar Excel'), "
+                        "button[name='do_report_2'], "
                         "button.btn.btn-primary[name='do_report_2'], "
                         "button:has-text('Generar Excel')"
                     ).first
                     month_sel = page.locator("select#month_0, div[name='month'] select.o_input, div[name='month'] select").first
-                    if export_btn.count() or month_sel.count():
+                    ok_btn = False
+                    try:
+                        ok_btn = page.locator("button[name='do_report_2']").count() > 0
+                    except Exception:
+                        ok_btn = False
+                    if ok_btn or month_sel.count():
                         report_ok = True
                         break
 
@@ -534,7 +554,7 @@ def run_seaap_whadox_pipeline(headless: bool = False, periodo_bd: str = "", ubig
                                 pass
 
                 export_btn = page.locator(
-                    "button[name='do_report_2']:has-text('Generar Excel'), "
+                    "button[name='do_report_2'], "
                     "button.btn.btn-primary[name='do_report_2'], "
                     "button:has-text('Generar Excel')"
                 ).first
