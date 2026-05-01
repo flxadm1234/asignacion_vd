@@ -9,8 +9,8 @@ from orchestrator import orchestrate_full_run, _default_log, _read_db_config_fro
 from config import get_current_etapa_date
 from db_utils import create_db_connection, ensure_requests_table, insert_automation_request, update_automation_request_status
 
-# Control de idempotencia para evitar ejecuciones duplicadas
-_RUNNING_JOBS = set()
+# Control de ejecución para evitar corridas concurrentes (Playwright + perfil)
+_RUNNING = False
 _LOCK = threading.Lock()
 
 
@@ -51,13 +51,13 @@ class OrchestratorHandler(BaseHTTPRequestHandler):
             if not periodo_bd or not re.match(r"^\d{4}-\d{2}-\d{2}$", periodo_bd):
                 periodo_bd = get_current_etapa_date()
 
-            job_key = f"GET|{headless}|{periodo_bd}|{periodo_manual}|{ubigeo}"
             with _LOCK:
-                if job_key in _RUNNING_JOBS:
-                    _default_log(f"[API] Solicitud duplicada ignorada ({job_key}).")
+                global _RUNNING
+                if _RUNNING:
+                    _default_log("[API] Solicitud ignorada: ya hay una ejecución en curso.")
                     self._send_json(202, {"status": "already_running", "message": "Solicitud en curso"})
                     return
-                _RUNNING_JOBS.add(job_key)
+                _RUNNING = True
 
             def _runner():
                 try:
@@ -81,7 +81,8 @@ class OrchestratorHandler(BaseHTTPRequestHandler):
                     _default_log(f"[API][ERROR] {e}")
                 finally:
                     with _LOCK:
-                        _RUNNING_JOBS.discard(job_key)
+                        global _RUNNING
+                        _RUNNING = False
 
             import threading
             threading.Thread(target=_runner, daemon=True).start()
@@ -107,13 +108,13 @@ class OrchestratorHandler(BaseHTTPRequestHandler):
             if not periodo_bd or not re.match(r"^\d{4}-\d{2}-\d{2}$", periodo_bd):
                 periodo_bd = get_current_etapa_date()
 
-            job_key = f"POST|{headless}|{periodo_bd}|{periodo_manual}|{ubigeo}"
             with _LOCK:
-                if job_key in _RUNNING_JOBS:
-                    _default_log(f"[API] Solicitud duplicada ignorada ({job_key}).")
+                global _RUNNING
+                if _RUNNING:
+                    _default_log("[API] Solicitud ignorada: ya hay una ejecución en curso.")
                     self._send_json(202, {"status": "already_running", "message": "Solicitud en curso"})
                     return
-                _RUNNING_JOBS.add(job_key)
+                _RUNNING = True
 
             def _runner():
                 try:
@@ -137,7 +138,8 @@ class OrchestratorHandler(BaseHTTPRequestHandler):
                     _default_log(f"[API][ERROR] {e}")
                 finally:
                     with _LOCK:
-                        _RUNNING_JOBS.discard(job_key)
+                        global _RUNNING
+                        _RUNNING = False
 
             t = threading.Thread(target=_runner, daemon=True)
             t.start()

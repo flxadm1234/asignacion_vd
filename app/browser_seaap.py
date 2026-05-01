@@ -123,16 +123,17 @@ def open_browser(headless, log):
     if no_display and not headless:
         log("[NAVEGADOR] No se detectó DISPLAY. Forzando modo headless.")
     p = sync_playwright().start()
-    ctx = p.chromium.launch_persistent_context(
-        user_data_dir=str(PROFILE_DIR),
+    browser = p.chromium.launch(
         headless=final_headless,
         args=[
             "--start-maximized",
             "--window-position=0,0",
             "--disable-blink-features=AutomationControlled",
             "--no-sandbox",
+            "--disable-dev-shm-usage",
         ],
     )
+    ctx = browser.new_context(accept_downloads=True, viewport={"width": 1440, "height": 900})
     page = ctx.new_page()
     try:
         page.bring_to_front()
@@ -142,7 +143,7 @@ def open_browser(headless, log):
         log(f"[NAVEGADOR] Chromium lanzado (persistente, headless).")
     else:
         log(f"[NAVEGADOR] Chromium lanzado (persistente, visible).")
-    return p, ctx, page
+    return p, browser, ctx, page
 
 # ============================================================
 # LOGOUT
@@ -1662,8 +1663,8 @@ def run_seaap_flow_for_account(
     registros_fallidos = []
     errores_count = 0
 
-    log(f"[SEAAP] Iniciando flujo por cuenta (ubigeo={ubigeo}) con headless={headless} → usando visible.")
-    p, ctx, page = open_browser(False, log)
+    log(f"[SEAAP] Iniciando flujo por cuenta (ubigeo={ubigeo}) con headless={headless} → usando {'headless' if headless else 'visible'}.")
+    p, browser, ctx, page = open_browser(headless, log)
 
     try:
         login_seaap(page, user, pwd, log)
@@ -1829,8 +1830,16 @@ def run_seaap_flow_for_account(
         except:
             pass
 
-        try: ctx.close()
-        except: pass
-        try: p.stop()
-        except: pass
+        try:
+            ctx.close()
+        except Exception:
+            pass
+        try:
+            browser.close()
+        except Exception:
+            pass
+        try:
+            p.stop()
+        except Exception:
+            pass
     return result
