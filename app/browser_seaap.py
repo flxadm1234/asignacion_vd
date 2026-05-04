@@ -939,6 +939,27 @@ def llenar_formulario_asignacion(page, datos, log):
 
 def presionar_guardar(page, log):
     btn = page.locator("button.o_form_button_save:has-text('Guardar'), button.o_form_button_save")
+    dirty = page.locator(".o_form_dirty, .o_form_view.o_form_dirty")
+
+    def _is_save_rpc(resp):
+        try:
+            if "/web/dataset/call_kw" not in (resp.url or ""):
+                return False
+            req = resp.request
+            if (req.method or "").upper() != "POST":
+                return False
+            try:
+                pd = req.post_data or ""
+            except Exception:
+                pd = ""
+            pd_low = pd.lower()
+            if ("\"method\":\"write\"" in pd_low) or ("\"method\": \"write\"" in pd_low):
+                return True
+            if ("\"method\":\"web_save\"" in pd_low) or ("\"method\": \"web_save\"" in pd_low):
+                return True
+            return False
+        except Exception:
+            return False
 
     for _ in range(20):
         if btn.count():
@@ -953,9 +974,24 @@ def presionar_guardar(page, log):
                     continue
             except Exception:
                 pass
-            b.click(timeout=60_000, force=True, no_wait_after=True)
+            try:
+                if dirty.count() > 0:
+                    pass
+            except Exception:
+                pass
+
+            try:
+                with page.expect_response(_is_save_rpc, timeout=8000) as rinfo:
+                    b.click(timeout=60_000, force=True, no_wait_after=True)
+                try:
+                    r = rinfo.value
+                    log(f"[SEAAP] Guardado RPC OK (status={r.status}).")
+                except Exception:
+                    pass
+            except Exception:
+                b.click(timeout=60_000, force=True, no_wait_after=True)
             log("[SEAAP] Guardado solicitado.")
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(250)
             return True
         page.wait_for_timeout(200)
 
@@ -975,6 +1011,7 @@ def esperar_guardado_ok(page, log, timeout_ms=20000):
     btn = page.locator("button.o_form_button_save:has-text('Guardar'), button.o_form_button_save")
     loading = page.locator(".o_loading, .o_view_loading, .o_spinner, .o_list_view_loading")
     notif = page.locator(".o_notification, .o_toaster, .toast, .o-notification")
+    dirty = page.locator(".o_form_dirty, .o_form_view.o_form_dirty")
 
     step = 250
     for _ in range(max(1, timeout_ms // step)):
@@ -982,6 +1019,17 @@ def esperar_guardado_ok(page, log, timeout_ms=20000):
             if loading.count() > 0:
                 page.wait_for_timeout(step)
                 continue
+        except Exception:
+            pass
+
+        try:
+            if page.locator(".o_form_view").count() > 0:
+                try:
+                    if dirty.count() == 0:
+                        log("[SEAAP] Guardado confirmado (formulario no está dirty).")
+                        return True
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -1896,7 +1944,7 @@ def run_seaap_flow_for_account(
                             page.goto(PADRON_URL, wait_until="domcontentloaded")
                         cerrar_todos_los_modales(page, log)
                         watchdog_recovery(page, log)
-                        page.wait_for_timeout(1500)
+                        page.wait_for_timeout(600)
                         continue
 
                 else:
@@ -1908,7 +1956,7 @@ def run_seaap_flow_for_account(
                             page.goto(PADRON_URL, wait_until="domcontentloaded")
                         cerrar_todos_los_modales(page, log)
                         watchdog_recovery(page, log)
-                        page.wait_for_timeout(1500)
+                        page.wait_for_timeout(600)
                         continue
 
                 watchdog_recovery(page, log)
@@ -1939,7 +1987,7 @@ def run_seaap_flow_for_account(
 
                         presionar_guardar(page, log)
                         cerrar_todos_los_modales(page, log)
-                        if not esperar_guardado_ok(page, log, timeout_ms=25000):
+                        if not esperar_guardado_ok(page, log, timeout_ms=9000):
                             motivo_fallo = "No se confirmó guardado (actorsocial=0)"
                             continue
 
@@ -1969,7 +2017,7 @@ def run_seaap_flow_for_account(
                     # =====================================================
                     presionar_guardar(page, log)
                     cerrar_todos_los_modales(page, log)
-                    if not esperar_guardado_ok(page, log, timeout_ms=25000):
+                    if not esperar_guardado_ok(page, log, timeout_ms=9000):
                         motivo_fallo = "No se confirmó guardado"
                         continue
 
@@ -1986,7 +2034,7 @@ def run_seaap_flow_for_account(
                     page.goto(PADRON_URL, wait_until="domcontentloaded")
                 cerrar_todos_los_modales(page, log)
                 watchdog_recovery(page, log)
-                page.wait_for_timeout(1500)
+                page.wait_for_timeout(600)
                 continue
 
             except Exception as e:
