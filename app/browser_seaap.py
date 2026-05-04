@@ -1023,6 +1023,65 @@ def esperar_guardado_ok(page, log, timeout_ms=20000):
     return False
 
 
+def volver_al_padron(page, log):
+    try:
+        cerrar_todos_los_modales(page, log)
+    except Exception:
+        pass
+    try:
+        watchdog_recovery(page, log)
+    except Exception:
+        pass
+
+    candidates = [
+        "button.o_back_button",
+        ".o_control_panel .breadcrumb a",
+        "a.o_back_button",
+        "button[title*='Atrás'], button[title*='Atras'], button[aria-label*='Atrás'], button[aria-label*='Atras']",
+        "button:has(i.fa-arrow-left), button:has(i.fa-chevron-left)",
+    ]
+
+    for sel in candidates:
+        try:
+            loc = page.locator(sel)
+            if loc.count() == 0:
+                continue
+            btn = loc.first
+            try:
+                btn.scroll_into_view_if_needed(timeout=5000)
+            except Exception:
+                pass
+            try:
+                btn.click(force=True, timeout=30_000)
+            except Exception:
+                continue
+            try:
+                page.wait_for_timeout(700)
+            except Exception:
+                pass
+            if page.locator("input.o_searchview_input, .o_searchview input").count():
+                log("[SEAAP] Volvió al padrón (botón Atrás).")
+                return True
+        except Exception:
+            continue
+
+    try:
+        page.go_back(timeout=30_000, wait_until="domcontentloaded")
+        if page.locator("input.o_searchview_input, .o_searchview input").count():
+            log("[SEAAP] Volvió al padrón (go_back).")
+            return True
+    except Exception:
+        pass
+
+    try:
+        page.goto(PADRON_URL, wait_until="domcontentloaded", timeout=60_000)
+        page.wait_for_timeout(800)
+        log("[SEAAP] Volvió al padrón (goto).")
+        return True
+    except Exception:
+        return False
+
+
 def _is_rural_selected(page):
     try:
         return page.locator(
@@ -1806,7 +1865,8 @@ def run_seaap_flow_for_account(
                         registros_fallidos.append({"dni": dni, "motivo": "Periodo no encontrado"})
 
                         # 🔥 VOLVER A PADRÓN
-                        page.goto(PADRON_URL, wait_until="domcontentloaded")
+                        if not volver_al_padron(page, log):
+                            page.goto(PADRON_URL, wait_until="domcontentloaded")
                         cerrar_todos_los_modales(page, log)
                         watchdog_recovery(page, log)
                         page.wait_for_timeout(1500)
@@ -1817,7 +1877,8 @@ def run_seaap_flow_for_account(
                         registros_fallidos.append({"dni": dni, "motivo": "Periodo no encontrado"})
 
                         # 🔥 VOLVER A PADRÓN
-                        page.goto(PADRON_URL, wait_until="domcontentloaded")
+                        if not volver_al_padron(page, log):
+                            page.goto(PADRON_URL, wait_until="domcontentloaded")
                         cerrar_todos_los_modales(page, log)
                         watchdog_recovery(page, log)
                         page.wait_for_timeout(1500)
@@ -1894,7 +1955,8 @@ def run_seaap_flow_for_account(
                     registros_fallidos.append({"dni": dni, "motivo": motivo_fallo or "Fallo no especificado"})
 
                 # 🔥 VOLVER A PADRÓN SIEMPRE
-                page.goto(PADRON_URL, wait_until="domcontentloaded")
+                if not volver_al_padron(page, log):
+                    page.goto(PADRON_URL, wait_until="domcontentloaded")
                 cerrar_todos_los_modales(page, log)
                 watchdog_recovery(page, log)
                 page.wait_for_timeout(1500)
@@ -1910,7 +1972,8 @@ def run_seaap_flow_for_account(
                     pass
 
                 # 🔥 VOLVER A PADRÓN
-                page.goto(PADRON_URL, wait_until="domcontentloaded")
+                if not volver_al_padron(page, log):
+                    page.goto(PADRON_URL, wait_until="domcontentloaded")
                 cerrar_todos_los_modales(page, log)
                 watchdog_recovery(page, log)
                 page.wait_for_timeout(1500)
