@@ -382,6 +382,8 @@ def seleccionar_tipo_centro_poblado(page, tipo, log):
         log(f"[SEAAP][ERROR] No existe el radio button '{tipo_norm}'.")
         return False
 
+    loading = page.locator(".o_loading, .o_view_loading, .o_spinner, .o_list_view_loading")
+
     # Intentaremos hasta 3 veces por fallos de carga de Odoo
     for intento in range(1, 4):
         try:
@@ -395,17 +397,34 @@ def seleccionar_tipo_centro_poblado(page, tipo, log):
             watchdog_recovery(page, log)
 
             cp = None
-            for _ in range(25):  # hasta 2.5s
+            max_loops = 80 if tipo_norm == "rural" else 40
+            for _ in range(max_loops):  # rural suele refrescar más lento
+                try:
+                    if loading.count() > 0:
+                        page.wait_for_timeout(150)
+                        continue
+                except Exception:
+                    pass
+
                 cp = _locator_autocomplete_input(page, "Centro poblado")
                 if cp is None and page.locator("input#centropoblado_id_0").count() > 0:
                     cp = page.locator("input#centropoblado_id_0").first
+
                 if cp is not None:
                     try:
                         _ = cp.input_value()
+                        try:
+                            if hasattr(cp, "is_enabled") and (not cp.is_enabled()):
+                                cp = None
+                                page.wait_for_timeout(150)
+                                continue
+                        except Exception:
+                            pass
                         break
                     except Exception:
                         cp = None
-                page.wait_for_timeout(100)
+
+                page.wait_for_timeout(150)
             if cp is None:
                 log("[SEAAP][WARN] El campo 'Centro poblado' aún no está disponible. Reintentando…")
                 continue
@@ -943,6 +962,58 @@ def presionar_guardar(page, log):
     raise RuntimeError("No se encontró botón Guardar.")
 
 
+def esperar_guardado_ok(page, log, timeout_ms=20000):
+    btn = page.locator("button.o_form_button_save:has-text('Guardar'), button.o_form_button_save")
+    loading = page.locator(".o_loading, .o_view_loading, .o_spinner, .o_list_view_loading")
+    notif = page.locator(".o_notification, .o_toaster, .toast, .o-notification")
+
+    step = 250
+    for _ in range(max(1, timeout_ms // step)):
+        try:
+            if loading.count() > 0:
+                page.wait_for_timeout(step)
+                continue
+        except Exception:
+            pass
+
+        try:
+            if notif.count() > 0:
+                try:
+                    txt = " ".join([(t or "").strip() for t in notif.all_inner_texts()])
+                except Exception:
+                    try:
+                        txt = " ".join([(t or "").strip() for t in notif.all_text_contents()])
+                    except Exception:
+                        txt = ""
+                if txt and ("guardad" in txt.lower() or "saved" in txt.lower()):
+                    log("[SEAAP] Guardado confirmado por notificación.")
+                    return True
+        except Exception:
+            pass
+
+        try:
+            if btn.count() == 0:
+                log("[SEAAP] Guardado confirmado (botón Guardar no visible).")
+                return True
+        except Exception:
+            pass
+
+        try:
+            b = btn.first
+            try:
+                if hasattr(b, "is_enabled") and (not b.is_enabled()):
+                    log("[SEAAP] Guardado confirmado (botón Guardar deshabilitado).")
+                    return True
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        page.wait_for_timeout(step)
+
+    return False
+
+
 # ============================================================
 # ESPERA DEFINITIVA: TABLA REAL (NO LA DE 50 FILAS)
 # ============================================================
@@ -1200,20 +1271,23 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
     valor = str(valor).strip()
     log(f"[ROBUST] Seleccionando '{valor}' en '{placeholder}'…")
 
-    inp = _locator_autocomplete_input(page, placeholder)
-    if inp is None:
-        log(f"[ROBUST][ERROR] Input '{placeholder}' no encontrado.")
-        return False
-
     is_sector = (placeholder.lower() == "sector")
     is_cp = (placeholder.lower() == "centro poblado")
 
     def intento_unico():
+        inp = _locator_autocomplete_input(page, placeholder)
+        if inp is None:
+            log(f"[ROBUST][ERROR] Input '{placeholder}' no encontrado.")
+            return False
+
         # si ya contiene el valor esperado → éxito instantáneo
-        val_actual = inp.input_value().strip()
-        if val_actual.lower() == valor.lower():
-            log(f"[ROBUST] '{placeholder}' ya tenía '{valor}' ✓")
-            return True
+        try:
+            val_actual = inp.input_value().strip()
+            if val_actual.lower() == valor.lower():
+                log(f"[ROBUST] '{placeholder}' ya tenía '{valor}' ✓")
+                return True
+        except Exception:
+            pass
 
         # limpiar
         inp.click(force=True)
@@ -1246,32 +1320,32 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
 
             return False
 
-        # buscar coincidencia exacta
-        opcion = menu.filter(has_text=valor)
-
-        # fallback rural cuando solo aparece una opción
-        if opcion.count() == 0:
+        # seleccionar opción por texto (exacta case-insensitive)
+        if not _click_autocomplete_option(page, valor):
+            # fallback: si solo hay 1 opción y coincide, click
             try:
-                opciones = menu.all_inner_texts()
+                opciones = [t.strip() for t in menu.all_inner_texts()]
             except Exception:
-                opciones = menu.all_text_contents()
-            if len(opciones) == 1 and opciones[0].strip().lower() == valor.lower():
+                try:
+                    opciones = [t.strip() for t in menu.all_text_contents()]
+                except Exception:
+                    opciones = []
+            opciones_validas = [t for t in opciones if t and "buscar más" not in t.lower()]
+            if len(opciones_validas) == 1 and opciones_validas[0].lower() == valor.lower():
                 try:
                     menu.first.click(force=True)
-                except:
+                except Exception:
                     return False
             else:
-                return False
-        else:
-            try:
-                opcion.first.click(force=True)
-            except:
                 return False
 
         page.wait_for_timeout(250)
 
         # verificación
-        final = inp.input_value().strip()
+        inp2 = _locator_autocomplete_input(page, placeholder)
+        if inp2 is None:
+            return False
+        final = inp2.input_value().strip()
         if final.lower() == valor.lower():
             log(f"[ROBUST] '{placeholder}' = '{final}' ✓")
             return True
@@ -1279,7 +1353,10 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
         # segundo chequeo en flujos rurales
         if is_cp:
             page.wait_for_timeout(500)
-            final2 = inp.input_value().strip()
+            inp3 = _locator_autocomplete_input(page, placeholder)
+            if inp3 is None:
+                return False
+            final2 = inp3.input_value().strip()
             if final2.lower() == valor.lower():
                 log(f"[ROBUST][RURAL] '{placeholder}' estable en '{final2}' ✓")
                 return True
@@ -1309,7 +1386,11 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
     # ============================================================
     # RECUPERACIÓN FINAL
     # ============================================================
-    val_fin = inp.input_value().strip()
+    inp_fin = _locator_autocomplete_input(page, placeholder)
+    if inp_fin is None:
+        log(f"[ROBUST][ERROR] Input '{placeholder}' no encontrado al final.")
+        return False
+    val_fin = inp_fin.input_value().strip()
     
     # Validación exacta
     if val_fin.lower() == valor.lower():
@@ -1713,78 +1794,78 @@ def run_seaap_flow_for_account(
                 cerrar_todos_los_modales(page, log)
                 page.wait_for_timeout(600)
 
-                # =====================================================
-                # 3) LIMPIAR FORMULARIO
-                # =====================================================
-                log("[SEAAP] Limpiando formulario antes de continuar…")
+                registro_ok = False
+                motivo_fallo = ""
 
-                if not limpiar_formulario(page, log):
-                    registros_fallidos.append({"dni": dni, "motivo": "No se pudo limpiar"})
+                for intento_reg in range(1, 3):
+                    log(f"[SEAAP] Intento {intento_reg}/2 → completar y guardar registro…")
 
-                    # 🔥 VOLVER A PADRÓN
-                    page.goto(PADRON_URL, wait_until="domcontentloaded")
-                    cerrar_todos_los_modales(page, log)
-                    watchdog_recovery(page, log)
-                    page.wait_for_timeout(1500)
-                    continue
+                    # =====================================================
+                    # 3) LIMPIAR FORMULARIO
+                    # =====================================================
+                    log("[SEAAP] Limpiando formulario antes de continuar…")
+                    if not limpiar_formulario(page, log):
+                        motivo_fallo = "No se pudo limpiar"
+                        continue
 
-                page.wait_for_timeout(600)
+                    page.wait_for_timeout(500)
 
-                # =====================================================
-                # 5) actorsocial = 0
-                # =====================================================
-                if str(r["actorsocial"]) == "0":
-                    log("[SEAAP] Caso especial: actorsocial = 0 → Guardando…")
+                    # =====================================================
+                    # 5) actorsocial = 0
+                    # =====================================================
+                    if str(r["actorsocial"]) == "0":
+                        log("[SEAAP] Caso especial: actorsocial = 0 → Guardando…")
 
+                        presionar_guardar(page, log)
+                        cerrar_todos_los_modales(page, log)
+                        if not esperar_guardado_ok(page, log, timeout_ms=25000):
+                            motivo_fallo = "No se confirmó guardado (actorsocial=0)"
+                            continue
+
+                        marcar_registro_consistente(conn, dni, etapa, log)
+                        registros_exitosos.append({"dni": dni})
+                        registro_ok = True
+                        break
+
+                    # =====================================================
+                    # 6) CASO NORMAL
+                    # =====================================================
+                    datos = {
+                        "tipo_centro_poblado": r["tipo_centro_poblado"],
+                        "centro_poblado": r["centro_poblado"],
+                        "zona": r["zona"],
+                        "mz": r["mz"],
+                        "sector": r["sector"],
+                        "nombre": r["nombre"]
+                    }
+
+                    if not llenar_formulario_asignacion(page, datos, log):
+                        motivo_fallo = "Formulario no llenado"
+                        continue
+
+                    # =====================================================
+                    # 7) GUARDAR + VERIFICAR
+                    # =====================================================
                     presionar_guardar(page, log)
                     cerrar_todos_los_modales(page, log)
+                    if not esperar_guardado_ok(page, log, timeout_ms=25000):
+                        motivo_fallo = "No se confirmó guardado"
+                        continue
 
                     marcar_registro_consistente(conn, dni, etapa, log)
                     registros_exitosos.append({"dni": dni})
+                    registro_ok = True
+                    break
 
-                    # 🔥 VOLVER AL PADRÓN SIEMPRE
-                    page.goto(PADRON_URL, wait_until="domcontentloaded")
-                    cerrar_todos_los_modales(page, log)
-                    watchdog_recovery(page, log)
-                    page.wait_for_timeout(1500)
-                    continue
+                if not registro_ok:
+                    registros_fallidos.append({"dni": dni, "motivo": motivo_fallo or "Fallo no especificado"})
 
-                # =====================================================
-                # 6) CASO NORMAL
-                # =====================================================
-                datos = {
-                    "tipo_centro_poblado": r["tipo_centro_poblado"],
-                    "centro_poblado": r["centro_poblado"],
-                    "zona": r["zona"],
-                    "mz": r["mz"],
-                    "sector": r["sector"],
-                    "nombre": r["nombre"]
-                }
-
-                if not llenar_formulario_asignacion(page, datos, log):
-                    registros_fallidos.append({"dni": dni, "motivo": "Formulario no llenado"})
-
-                    # 🔥 VOLVER A PADRÓN
-                    page.goto(PADRON_URL, wait_until="domcontentloaded")
-                    cerrar_todos_los_modales(page, log)
-                    watchdog_recovery(page, log)
-                    page.wait_for_timeout(1500)
-                    continue
-
-                # =====================================================
-                # 7) GUARDAR
-                # =====================================================
-                presionar_guardar(page, log)
-                cerrar_todos_los_modales(page, log)
-
-                marcar_registro_consistente(conn, dni, etapa, log)
-                registros_exitosos.append({"dni": dni})
-
-                # 🔥 VOLVER A PADRÓN
+                # 🔥 VOLVER A PADRÓN SIEMPRE
                 page.goto(PADRON_URL, wait_until="domcontentloaded")
                 cerrar_todos_los_modales(page, log)
                 watchdog_recovery(page, log)
                 page.wait_for_timeout(1500)
+                continue
 
             except Exception as e:
                 registros_fallidos.append({"dni": dni, "motivo": str(e)})
