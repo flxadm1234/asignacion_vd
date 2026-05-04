@@ -1033,9 +1033,36 @@ def volver_al_padron(page, log):
     except Exception:
         pass
 
+    # Preferido: breadcrumb exacto al padrón ("Ubica donde vive...")
+    try:
+        link_padron = page.locator(
+            "a.fw-bold[href='/odoo/action-314/1/action-317'], "
+            "a[href='/odoo/action-314/1/action-317'], "
+            ".o_control_panel .breadcrumb a[href='/odoo/action-314/1/action-317'], "
+            "a[data-tooltip*='Back to'][href='/odoo/action-314/1/action-317'], "
+            "a:has-text('Ubica donde vive')"
+        ).first
+        if link_padron.count():
+            try:
+                link_padron.scroll_into_view_if_needed(timeout=5000)
+            except Exception:
+                pass
+            try:
+                link_padron.click(force=True, timeout=30_000)
+            except Exception:
+                pass
+            try:
+                page.wait_for_timeout(900)
+            except Exception:
+                pass
+            if page.locator("input.o_searchview_input, .o_searchview input").count():
+                log("[SEAAP] Volvió al padrón (breadcrumb Ubica donde vive…).")
+                return True
+    except Exception:
+        pass
+
     candidates = [
         "button.o_back_button",
-        ".o_control_panel .breadcrumb a",
         "a.o_back_button",
         "button[title*='Atrás'], button[title*='Atras'], button[aria-label*='Atrás'], button[aria-label*='Atras']",
         "button:has(i.fa-arrow-left), button:has(i.fa-chevron-left)",
