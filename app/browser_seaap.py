@@ -1084,11 +1084,10 @@ def volver_al_padron(page, log):
     # Preferido: breadcrumb exacto al padrón ("Ubica donde vive...")
     try:
         link_padron = page.locator(
-            "a.fw-bold[href='/odoo/action-314/1/action-317'], "
-            "a[href='/odoo/action-314/1/action-317'], "
+            ".o_control_panel .breadcrumb a.fw-bold.text-truncate[href='/odoo/action-314/1/action-317'], "
+            ".o_control_panel .breadcrumb a.fw-bold[href='/odoo/action-314/1/action-317'], "
             ".o_control_panel .breadcrumb a[href='/odoo/action-314/1/action-317'], "
-            "a[data-tooltip*='Back to'][href='/odoo/action-314/1/action-317'], "
-            "a:has-text('Ubica donde vive')"
+            "a.fw-bold.text-truncate[href='/odoo/action-314/1/action-317']"
         ).first
         if link_padron.count():
             try:
@@ -1100,7 +1099,7 @@ def volver_al_padron(page, log):
             except Exception:
                 pass
             try:
-                page.wait_for_timeout(900)
+                page.wait_for_load_state("domcontentloaded", timeout=30_000)
             except Exception:
                 pass
             if page.locator("input.o_searchview_input, .o_searchview input").count():
@@ -1139,14 +1138,6 @@ def volver_al_padron(page, log):
                 return True
         except Exception:
             continue
-
-    try:
-        page.go_back(timeout=30_000, wait_until="domcontentloaded")
-        if page.locator("input.o_searchview_input, .o_searchview input").count():
-            log("[SEAAP] Volvió al padrón (go_back).")
-            return True
-    except Exception:
-        pass
 
     try:
         page.goto(PADRON_URL, wait_until="domcontentloaded", timeout=60_000)
