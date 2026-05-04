@@ -959,6 +959,15 @@ def presionar_guardar(page, log):
             return True
         page.wait_for_timeout(200)
 
+    try:
+        if page.locator(".o_form_view").count() == 0:
+            log("[SEAAP][ERROR] No estamos en formulario (o_form_view no detectado). No se puede guardar.")
+    except Exception:
+        pass
+    try:
+        log(f"[SEAAP][DEBUG] URL actual: {page.url}")
+    except Exception:
+        pass
     raise RuntimeError("No se encontró botón Guardar.")
 
 
@@ -1012,6 +1021,18 @@ def esperar_guardado_ok(page, log, timeout_ms=20000):
         page.wait_for_timeout(step)
 
     return False
+
+
+def _is_rural_selected(page):
+    try:
+        return page.locator(
+            "div[name='tipo_centropoblado'] input.o_radio_input[data-value='rural']:checked, "
+            "div[name='tipo_centropoblado'] input[type='radio'][data-value='rural']:checked, "
+            "input.o_radio_input[data-value='rural']:checked, "
+            "input[type='radio'][data-value='rural']:checked"
+        ).count() > 0
+    except Exception:
+        return False
 
 
 # ============================================================
@@ -1273,6 +1294,7 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
 
     is_sector = (placeholder.lower() == "sector")
     is_cp = (placeholder.lower() == "centro poblado")
+    is_rural_ctx = _is_rural_selected(page)
 
     def intento_unico():
         inp = _locator_autocomplete_input(page, placeholder)
@@ -1283,7 +1305,7 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
         # si ya contiene el valor esperado → éxito instantáneo
         try:
             val_actual = inp.input_value().strip()
-            if val_actual.lower() == valor.lower():
+            if (not is_rural_ctx) and val_actual.lower() == valor.lower():
                 log(f"[ROBUST] '{placeholder}' ya tenía '{valor}' ✓")
                 return True
         except Exception:
@@ -1303,8 +1325,12 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
             inp.press("ArrowDown")
         except Exception:
             pass
+
+        if is_rural_ctx and (is_cp or is_sector):
+            page.wait_for_timeout(1000)
+
         menu = _locator_autocomplete_options(page)
-        max_wait_ms = 2500 if is_cp else 2000
+        max_wait_ms = 4500 if (is_rural_ctx and (is_cp or is_sector)) else (2500 if is_cp else 2000)
         for _ in range(max(1, max_wait_ms // 80)):
             if menu.count() > 0:
                 break
@@ -1314,7 +1340,7 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
         if menu.count() == 0:
             # si el campo quedó correcto, aun sin menú → éxito
             final = inp.input_value().strip()
-            if final.lower() == valor.lower():
+            if final.lower() == valor.lower() and (not (is_rural_ctx and (is_cp or is_sector))):
                 log(f"[ROBUST] '{placeholder}' = '{final}' (sin menú) ✓")
                 return True
 
@@ -1345,14 +1371,19 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
         inp2 = _locator_autocomplete_input(page, placeholder)
         if inp2 is None:
             return False
+        try:
+            inp2.press("Tab")
+        except Exception:
+            pass
+        page.wait_for_timeout(150)
         final = inp2.input_value().strip()
         if final.lower() == valor.lower():
             log(f"[ROBUST] '{placeholder}' = '{final}' ✓")
             return True
 
         # segundo chequeo en flujos rurales
-        if is_cp:
-            page.wait_for_timeout(500)
+        if is_cp or (is_sector and is_rural_ctx):
+            page.wait_for_timeout(900 if is_rural_ctx else 500)
             inp3 = _locator_autocomplete_input(page, placeholder)
             if inp3 is None:
                 return False
@@ -1378,7 +1409,9 @@ def seleccionar_autocomplete_robusto(page, placeholder, valor, log,
             return True
 
         # descanso entre intentos
-        if is_cp:
+        if is_rural_ctx and (is_cp or is_sector):
+            page.wait_for_timeout(900)
+        elif is_cp:
             page.wait_for_timeout(400)
         else:
             page.wait_for_timeout(espera_inicial + (i * 150))
